@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homework 1: Toy elliptic curve</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><a href="../index.html">Home</a><span>/</span><span class="brand">Homework 1: Toy elliptic curve</span></header>
+<main>
+  <div class="hero small">
+    <p class="eyebrow">Homework 1 · Cryptography</p>
+    <h1>Toy elliptic curve</h1>
+    <p class="lead">A private key is just a number k. Multiplying a base point G on an elliptic curve by k gives the public key Q = kG: easy to compute, but hard to reverse. Here the idea is shown on a toy curve small enough to follow by hand.</p>
+  </div>
+  <nav class="toc" id="toc" aria-label="Contents"></nav>
+
+  <section>
+    <h2 id="summary">Summary</h2>
+  <p>The curve is <code>y² = x³ + 7 (mod 17)</code> with base point <code>G = (1, 5)</code> and private key <code>k = 6</code>. Computing 1G, 2G, …, 6G gives the toy public key <strong>Q = 6G = (5, 8)</strong>. The same result comes out of the faster double-and-add method.</p>
+  <p>The curve has 17 points plus the point at infinity, so 18 elements in total. The point G = (1, 5) has order 9: 9G is the point at infinity and the sequence then repeats. The statistical experiments in Task 3 show flat frequencies, almost no linear correlation and about 45% of output bits changing when k changes slightly. All of this comes from periodicity and the tiny size of the group, not from real randomness. The key difference from a hash function is the algebraic structure of the group, which is discussed at the end of Task 3.</p>
+
+  </section>
+
+  <section>
+  <h2 id="task-1">Task 1: curve and toy public key</h2>
+  <p>Curve: <code>y² = x³ + 7 (mod 17)</code>. The public key is <code>Q = kG</code>, where k is the private key and G the base point.</p>
+  <div class="split">
+    <div class="cols1">
+<h3 id="how-it-works">How it works</h3>
+  <h4>Point addition and doubling</h4>
+  <p>To add two different points P₁ = (x₁, y₁) and P₂ = (x₂, y₂), draw the line through them. It meets the curve in a third point; reflecting that point across the x axis gives P₁ + P₂. Algebraically, the slope of the line is</p>
+  <p><code>λ = (y₂ − y₁) / (x₂ − x₁)</code></p>
+  <p>and the result is</p>
+  <p><code>x₃ = λ² − x₁ − x₂</code>, <code>y₃ = λ (x₁ − x₃) − y₁</code>.</p>
+  <p>When P₁ = P₂ (doubling), the line is the tangent at the point and the slope is <code>λ = (3x² + a) / (2y)</code>. For this curve a = 0, so it becomes <code>3x² / 2y</code>.</p>
+  <p>All operations are done modulo 17, and "division" means multiplication by the modular inverse. For example, the inverse of 10 is 12, because 10 · 12 = 120 = 7 · 17 + 1. Negative numbers are brought back into the range 0 to 16, which is why the code uses a modulo function that never returns negative values.</p>
+  <p>Worked example, 2G = G + G with G = (1, 5):</p>
+  <ul>
+    <li>λ = 3 · 1² / (2 · 5) = 3 / 10 = 3 · 12 = 36 ≡ 2 (mod 17)</li>
+    <li>x₃ = 2² − 1 − 1 = 2</li>
+    <li>y₃ = 2 · (1 − 2) − 5 = −7 ≡ 10 (mod 17)</li>
+    <li>so 2G = (2, 10), and 10² = 100 ≡ 15 = 2³ + 7, so it is on the curve.</li>
+  </ul>
+  <p>Next, 3G = G + 2G: λ = (10 − 5) / (2 − 1) = 5, x₃ = 25 − 1 − 2 = 22 ≡ 5, y₃ = 5 · (1 − 5) − 5 = −25 ≡ 9, so 3G = (5, 9).</p>
+
+  <h4>The point at infinity</h4>
+  <p>The point at infinity (INF) is the neutral element of the group: P + INF = P. It appears when a point is added to its opposite −P = (x, −y), because the line through them is vertical and meets the curve nowhere else. Here G + 8G = (1, 5) + (1, 12) = INF, so 9G = INF. The order of G is therefore 9: after 9 steps the sequence goes back to G.</p>
+
+  <h4>Double-and-add</h4>
+  <p>Repeated addition needs k − 1 additions, which is hopeless for a 256-bit k. Double-and-add uses the binary expansion of k. The code keeps a running value <code>addend</code> equal to G, 2G, 4G, 8G, … (each one is a doubling of the previous), and adds it to the result whenever the corresponding bit of k is 1.</p>
+  <p>For k = 6 = 110 in binary, reading from the lowest bit: bit 0 is 0 (skip G), bit 1 is 1 (add 2G), bit 2 is 1 (add 4G). So 6G = 2G + 4G = (2, 10) + (12, 1) = (5, 8), the same as the six additions in the table. For a 256-bit k this takes at most about 256 doublings and 256 additions.</p>
+
+  <h4>Why this is only a toy</h4>
+  <p>Given Q = (5, 8), recovering k means trying k = 1, 2, 3, … until kG = Q. With 18 elements this takes six steps. On the real curve secp256k1 the group order is about 2²⁵⁶, and the best known generic attack (Pollard's rho) needs about 2¹²⁸ operations. That is the elliptic curve discrete logarithm problem (ECDLP), and the one-way behavior of Q = kG rests on it.</p>
+
+  
+    </div>
+    <div class="panel sticky">
+      <h3>Run it</h3>
+      <label>G x <input id="t1-gx" type="number" value="1" min="0" max="16"></label>
+      <label>G y <input id="t1-gy" type="number" value="5" min="0" max="16"></label>
+      <label>k <input id="t1-k" type="number" value="6" min="1" max="100"></label>
+      <button id="t1-run" type="button">Compute</button>
+      <p id="t1-msg" class="msg" role="status"></p>
+      <ul class="chips" id="t1-steps"></ul>
+      <p class="result">Toy public key: <output id="t1-pubkey">–</output></p>
+      <p class="legend">Each chip shows nG. The check mark means the point satisfies the curve equation.</p>
+    </div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="task-2">Task 2: slowed-down visualisation</h2>
+  <p>Every dot is a point of the curve mod 17. Press Step to see G, 2G, 3G, … appear one at a time.</p>
+  <div class="split">
+    <div class="panel">
+      <label>G <select id="t2-g"></select></label>
+      <label>k <input id="t2-k" type="number" value="6" min="1" max="100"></label>
+      <label>Speed <select id="t2-speed"><option value="1500">slow</option><option value="900" selected>normal</option><option value="450">fast</option></select></label>
+      <button id="t2-step" type="button">Step</button>
+      <button id="t2-play" type="button">Play</button>
+      <button id="t2-reset" type="button">Reset</button>
+      <p id="t2-caption" class="msg" role="status"></p>
+      <canvas id="t2-plot" width="560" height="560" aria-label="Points of the toy curve mod 17 and the sequence G, 2G, 3G, ..."></canvas>
+    </div>
+    <div>
+      <p class="legend"><span class="dot grey"></span>points of the curve <span class="dot acc"></span>visited multiples of G <span class="dot ring"></span>current point (labels show nG)</p>
+  <p class="note">The line joins successive multiples of G in the order they are computed. It is not the geometric line used to add points on a curve over the real numbers. The point at infinity is not drawn, because it has no finite coordinates.</p>
+
+  
+      <h3 id="what-you-see">What you see</h3>
+  <p>The grey dots are the 17 points of the curve in the 17 × 17 grid of residues. With G = (1, 5) and k = 6 the path goes (1, 5), (2, 10), (5, 9), (12, 1), (12, 16), (5, 8): from the picture alone, the jumps look scattered and no direction or step size repeats. There is no visible rule that would let you guess the next point without doing the addition.</p>
+  <p>Two things are still visible. First, the picture is symmetric: the points come in vertical pairs (x, y) and (x, 17 − y), the point and its opposite. Along the path, nG and (9 − n)G are such a pair, for example 1G = (1, 5) and 8G = (1, 12). Second, if you raise k above 9, the path retraces the same eight points and passes through the point at infinity every 9 steps, because the order of G is 9. Choosing a point of order 18, such as (6, 6), makes the path visit all 17 points before returning.</p>
+  <p>The picture shows why the toy example is not secure: with so few points, one can simply list them all and read off k. The scattered look is the property that matters for real keys, where the group has about 2²⁵⁶ elements and no such enumeration is possible.</p>
+  
+    </div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="task-3">Task 3: statistical exploration</h2>
+  <p>Compute Q = kG for k = 1, …, K with a chosen base point and look at the statistics of the resulting points.</p>
+  <div class="panel">
+    <label>G <select id="t3-g"></select></label>
+    <label>K <input id="t3-K" type="number" value="180" min="1" max="2000"></label>
+    <button id="t3-run" type="button">Run experiment</button>
+    <p id="t3-msg" class="msg" role="status"></p>
+  </div>
+  <div id="t3-results"></div>
+  <p class="note">These measures describe this sample only. They illustrate the behavior of the toy, but they do not prove one-wayness or cryptographic security, and the avalanche test is only illustrative because a curve point is not a hash.</p>
+  <h3>Public keys for the chosen G</h3>
+  <p>All valid private keys k = 1 … order − 1 with their public keys, written in binary (5 bits per coordinate).</p>
+  <div class="table-wrap"><table class="t-compact" id="t3-subgroup"></table></div>
+  <h3>All base points and their order</h3>
+  <ul class="chips" id="t3-orders"></ul>
+  <div class="cols2">
+<h3 id="observations">Observations</h3>
+  <p>Two runs are discussed below, both reproducible with the controls above: <strong>run A</strong> with G = (1, 5) (order 9) and K = 200, and <strong>run B</strong> with G = (6, 6) (order 18, so it generates the whole group) and K = 180, which is exactly 10 full periods. Larger K, for example 2000, gives the same picture with the same proportions.</p>
+
+  <h4>Distribution of x and y, frequency of values</h4>
+  <p>In run A only 8 distinct points appear, each 22 or 23 times, and the point at infinity appears 22 times (every multiple of 9). In run B all 17 points appear exactly 10 times each, and the point at infinity another 10 times. The frequencies are as flat as possible, but this happens because the sequence kG is periodic with period equal to the order of G, so each point is visited once per period. It is not evidence of randomness.</p>
+  <p>The y values are perfectly flat in run B (each of the 17 values appears 10 times). The x values are not. Only 9 different x values occur (1, 2, 3, 5, 6, 8, 10, 12, 15), and 8 values never occur. Eight of those x values appear 20 times, because each has two points (x, y) and (x, −y), while x = 3 appears 10 times because its only point is (3, 0). Only about half of the residues are x coordinates of curve points, since x³ + 7 has to be a square. Cubing is a bijection modulo 17 (gcd(3, 16) = 1), which is why every y belongs to exactly one x and the y values come out flat.</p>
+
+  <h4>Distribution of bits</h4>
+  <p>Coordinates are written with 5 bits. The top bit of x is never 1 (all x are at most 15) and the top bit of y is 1 only for y = 16, so about 0.06 of the time. The lower bits are close to balanced, between 0.41 and 0.53 in run B. They are not exactly 0.5, because the values 0 to 16 do not fill the 5-bit range uniformly. For a hash function every output bit should be 1 with probability 0.5. Here the deviation is a small-field effect: on secp256k1 the field size p is extremely close to 2²⁵⁶, so the bias in the top bits is negligible.</p>
+
+  <h4>Apparent uniformity and correlations between k and kG</h4>
+  <p>The Pearson correlation between k and x or y is close to zero: between −0.016 and 0.007 in run A and between −0.003 and 0 in run B (K = 180), and it shrinks further for K = 2000. There is no linear trend between the input and the output. The correlation between x and y is about 0.09 in run B. It is small but not zero, because the two coordinates are linked by the curve equation y² = x³ + 7. A correlation near zero only excludes a linear relation: kG is completely determined by k and depends only on k mod 18, so a test for periodicity would find a perfect lag-18 pattern.</p>
+
+  <h4>Avalanche-like behavior</h4>
+  <p>Flipping one bit of k changes on average 4.3 to 4.4 of the 10 output bits (about 0.43 to 0.44), and moving from k to k + 1 changes about 4.6 to 4.7 (0.46 to 0.47). This is close to the 50% expected from a good hash function, a little below it because the top bit of x never changes. It is not a real avalanche effect. With only 17 possible outputs, two different points always look "different" in about half of the bits. More importantly, (k + 1)G = kG + G, so anyone who sees Q = kG can compute the next output by adding the public point G, without knowing k. For a hash function, H(m) and H(m + 1) are computationally unrelated.</p>
+
+  
+  </div>
+  </section>
+
+  <section>
+  <h2 id="discussion">Discussion and conclusions</h2>
+  <p>The table compares what is needed from a one-way function based on the elliptic-curve discrete logarithm problem (Q = kG) and from a cryptographic hash function.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Property</th><th>Scalar multiplication Q = kG</th><th>Cryptographic hash function</th></tr></thead>
+      <tbody>
+        <tr><td>Deterministic and easy to compute forward</td><td>Yes (double-and-add)</td><td>Yes</td></tr>
+        <tr><td>Hard to invert</td><td>Required, based on ECDLP. Fails in the toy (18 elements) but holds on secp256k1 (about 2¹²⁸ steps)</td><td>Required (preimage resistance)</td></tr>
+        <tr><td>Uniformly distributed outputs</td><td>Meaningful: public keys of random private keys are uniform on the group and leak nothing about k</td><td>Required: output should look random</td></tr>
+        <tr><td>Avalanche effect</td><td>Absent: nearby inputs give related outputs</td><td>Required</td></tr>
+        <tr><td>Collision resistance</td><td>Not needed: injective for k in 1…n−1 (although k and k + n collide)</td><td>Required</td></tr>
+        <tr><td>Algebraic structure, (k₁ + k₂)G = k₁G + k₂G</td><td>Essential: enables signatures, key agreement and public derivation of keys</td><td>Harmful: a hash must have no exploitable structure</td></tr>
+        <tr><td>Input and output size</td><td>Input is a number below the group order, output is a point (two coordinates)</td><td>Arbitrary input length, fixed output length</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Properties that matter for the public-key function are determinism, an efficient forward computation, a very large group (so that the sequence kG does not repeat in practice) and the hardness of inverting it. Uniform-looking public keys also matter, since they must not reveal k. The algebraic structure is not a defect but the purpose: signatures, ECDH and hierarchical key derivation all use it. Avalanche and collision resistance, in contrast, are properties of hash functions. They are what makes a hash suitable for fingerprints, commitments and addresses, and it is the job of Keccak-256 in the pipeline of Homework 2.</p>
+  <p>The statistics of the toy also show the limit of this kind of test. Flat frequencies, near-zero correlation and about 45% of bits flipping would all be consistent with a random-looking function, but here they come from periodicity and the tiny group. Statistical randomness tells nothing about computational hardness: with 18 elements the inversion is trivial, whatever the histograms look like. The security of Q = kG comes from the size of the group and the ECDLP, not from the statistical properties we measured.</p>
+  
+  </section>
+</main>
+<footer>
+  <p>Matteo Miano · Student ID 2117312 · Sapienza University of Rome · Master's Degree in Cybersecurity · Statistics 2026/27</p>
+  <p>Toy examples for educational purposes. Never use a real seed phrase or private key.</p>
+</footer>
+<script src="../site.js"></script>
+<script src="curve.js"></script>
+<script src="helpers.js"></script>
+<script src="task1.js"></script>
+<script src="task2.js"></script>
+<script src="task3.js"></script>
+</body>
+</html>
