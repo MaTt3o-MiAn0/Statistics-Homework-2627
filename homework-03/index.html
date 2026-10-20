@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homework 3: Encryption and cryptanalysis</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><a href="../index.html">Home</a><span>/</span><span class="brand">Homework 3: Encryption and cryptanalysis</span></header>
+<main>
+  <div class="hero small">
+    <p class="eyebrow">Homework 3 · Encryption</p>
+    <h1>Encryption and cryptanalysis</h1>
+    <p class="lead">A toy public-key scheme on secp256k1, the Caesar cipher, and two attacks: a statistical one against Caesar and a brute-force one against the toy ECC key.</p>
+  </div>
+  <nav class="toc" id="toc" aria-label="Contents"></nav>
+
+  <div class="panel">
+    <label>Message used in all demos <input id="msg" type="text" value="Meet me at the library at noon" style="width:26rem;max-width:100%"></label>
+  </div>
+
+  <section>
+  <h2 id="summary">Summary</h2>
+  <p>This homework encrypts and decrypts the same message with two very different schemes and then attacks both. The first is a toy public-key scheme built on the secp256k1 curve of Homework 1, here with real 256-bit numbers but a deliberately small private key. The second is the Caesar cipher, a shift of the alphabet. The two schemes are compared by their procedures, key spaces and statistical properties. Then each is attacked in the way that fits its weakness: letter statistics against Caesar, and an exhaustive search of the small key space against the toy ECC scheme.</p>
+  <p>The main conclusion is that the two attacks exploit different things. The statistical attack uses the structure of the language, which the Caesar cipher leaves visible. The brute-force attack ignores the message completely and only uses the small number of possible private keys. A properly configured ECC scheme resists both: its ciphertext looks uniform, and its key space is far too large to search.</p>
+  </section>
+
+  <section>
+  <h2 id="task-1">Task 1: encryption with the toy ECC scheme</h2>
+  <p>In Homework 1 the equation <code>y² = x³ + 7</code> was used over a field of 17 elements. Here the same equation is used over the real prime field of secp256k1 (256-bit numbers, computed with BigInt in JavaScript). As in the assignment, the private key is restricted to a small range so that experiments are feasible. The scheme is ECIES-style: a Diffie–Hellman key agreement used to derive a keystream.</p>
+  <div class="split">
+    <div class="cols2">
+      <h3>Key generation</h3>
+      <p>The private key d is a random integer in [1, 2<sup>b</sup> − 1], with b between 8 and 22 bits (the full secp256k1 range would be about 256 bits). The public key is the point Q = dG, where G is the secp256k1 base point.</p>
+      <h3>Encryption (needs only Q)</h3>
+      <ol>
+        <li>Choose a fresh random ephemeral scalar r.</li>
+        <li>Compute C₁ = rG.</li>
+        <li>Compute the shared secret S = rQ.</li>
+        <li>Derive a keystream from S: block i is SHA-256("toyECIES" ‖ x(S) ‖ i), and the blocks are concatenated to the length of the message.</li>
+        <li>Compute C₂ = M XOR keystream, byte by byte.</li>
+      </ol>
+      <p>The ciphertext is the pair (C₁, C₂).</p>
+      <h3>Decryption (needs d)</h3>
+      <p>The receiver computes S = d·C₁ = d·r·G = r·(dG) = rQ. This is the same shared secret, so the same keystream is derived and M = C₂ XOR keystream.</p>
+      <h3>Role of the keys</h3>
+      <ul>
+        <li><strong>Public key Q:</strong> can be published. Anyone can encrypt with it, but computing d from Q is the elliptic-curve discrete logarithm problem.</li>
+        <li><strong>Private key d:</strong> kept secret. It is the only thing needed to decrypt.</li>
+        <li><strong>Ephemeral key r:</strong> used once and thrown away. It makes encryption randomized: the same message gives a different ciphertext each time.</li>
+        <li><strong>Shared secret S:</strong> never sent. Sender (from r and Q) and receiver (from d and C₁) compute it independently.</li>
+      </ul>
+      <p class="note">This is a teaching scheme. It has no authentication, so an attacker can flip bits of the ciphertext and the same bits flip in the decrypted message.</p>
+    </div>
+    <div class="panel sticky">
+      <h3>Run it</h3>
+      <label>Private key size <select id="e-bits"><option value="8">8 bits</option><option value="12">12 bits</option><option value="16" selected>16 bits</option><option value="20">20 bits</option><option value="22">22 bits</option></select></label>
+      <button id="e-gen" type="button">Generate keys</button>
+      <button id="e-enc" type="button">Encrypt</button>
+      <button id="e-dec" type="button">Decrypt</button>
+      <p id="e-msg" class="msg" role="status"></p>
+      <dl class="kv">
+        <dt>Private d</dt><dd id="e-d">–</dd>
+        <dt>Public Q.x</dt><dd id="e-Qx">–</dd>
+        <dt>Public Q.y</dt><dd id="e-Qy">–</dd>
+        <dt>C₁.x</dt><dd id="e-C1x">–</dd>
+        <dt>C₁.y</dt><dd id="e-C1y">–</dd>
+        <dt>C₂ (hex)</dt><dd id="e-C2">–</dd>
+        <dt>Secret S.x</dt><dd id="e-Sx">–</dd>
+      </dl>
+      <p class="result">Decrypted: <output id="e-plain">–</output></p>
+      <p class="legend">Press Encrypt several times: the ciphertext changes every time, because r changes.</p>
+    </div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="task-2">Task 2: the Caesar cipher</h2>
+  <p>The Caesar cipher shifts every letter of the alphabet by the same number k of positions. With the letters numbered A = 0, …, Z = 25, encryption is <code>c = (m + k) mod 26</code> and decryption is <code>m = (c − k) mod 26</code>. Case is kept and other characters (spaces, punctuation) are not changed. The key k is the only secret and it is shared by both sides.</p>
+  <div class="panel">
+    <label>Key k (0–25) <input id="c-key" type="number" value="5" min="0" max="25" style="width:5rem"></label>
+    <div class="table-wrap"><table class="t-compact alpha" id="c-alpha"></table></div>
+    <dl class="kv">
+      <dt>Ciphertext</dt><dd id="c-cipher">–</dd>
+      <dt>Decrypted</dt><dd id="c-plain">–</dd>
+    </dl>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="task-3">Task 3: comparing the two schemes</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Toy ECC scheme</th><th>Caesar cipher</th></tr></thead>
+      <tbody>
+        <tr><td>Type</td><td>Public-key (asymmetric): Diffie–Hellman plus a keystream</td><td>Symmetric: monoalphabetic substitution</td></tr>
+        <tr><td>Keys</td><td>Public Q = dG, private d, and a fresh ephemeral r for each message</td><td>One shared secret shift k</td></tr>
+        <tr><td>Encryption</td><td>C₁ = rG, S = rQ, C₂ = M XOR keystream(S)</td><td>c = (m + k) mod 26 for every letter</td></tr>
+        <tr><td>Decryption</td><td>S = d·C₁, then M = C₂ XOR keystream(S)</td><td>m = (c − k) mod 26</td></tr>
+        <tr><td>Key space</td><td>Here 2<sup>b</sup> private keys (b = 8…22). A real scheme: about 2²⁵⁶</td><td>26 keys (25 that change anything)</td></tr>
+        <tr><td>Randomized?</td><td>Yes: a new r each time, so a new ciphertext</td><td>No: same message and key, same ciphertext</td></tr>
+        <tr><td>Statistics of the ciphertext</td><td>Bytes look uniform, no letter structure</td><td>Letter frequencies are kept, only shifted</td></tr>
+        <tr><td>What protects it</td><td>The discrete logarithm problem and the hash function</td><td>Only the secrecy of a number among 26</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Similarities</h3>
+  <p>Both have an encryption and a decryption procedure that undo each other, and in both only the holder of the secret key can decrypt. Both can also be seen as adding a key-dependent mask to the message: Caesar adds the same number k to every letter, and the ECC scheme XORs every byte with a pseudorandom keystream derived from the shared secret.</p>
+  <h3>Differences</h3>
+  <p>The mask is the whole difference. In Caesar it is constant, so equal plaintext letters always give equal ciphertext letters and the statistics of the language pass straight through. In the ECC scheme the mask changes at every byte and is unpredictable without the secret S, so the ciphertext carries no letter structure. Also, Caesar needs a secret shared in advance, while the ECC scheme only needs the receiver's public key. The key space is the other difference: 26 keys against a number that grows exponentially with the private-key size.</p>
+  <h3>Statistical properties</h3>
+  <p>The table below measures this on the first 2000 characters of a test text (Moby Dick, 1532 letters), encrypted with Caesar (key 7) and with the ECC scheme (private key 0xABCD, fixed ephemeral key so that the numbers are reproducible). The symbols are the 26 letters for Caesar and the 256 byte values for ECC.</p>
+  <div class="table-wrap"><table class="t-compact" id="s-table"></table></div>
+  <div class="grid2">
+    <div id="s-chart1"></div>
+    <div id="s-chart2"></div>
+  </div>
+  <div class="cols2">
+    <p>The Caesar ciphertext has the same histogram as English, only rotated by 7 positions: the highest bar moves from E to L. Entropy and index of coincidence are exactly those of the plaintext (4.154 bits and 0.0664), because the cipher is only a permutation of the 26 letters. The most frequent letter alone already points to the key.</p>
+    <p>The ECC ciphertext is flat. The entropy is 7.915 bits out of a maximum of 8, which is what a sample of 2000 uniform random bytes gives (about 7.91). The index of coincidence is 0.0039, equal to 1/256 for uniform bytes, and no byte value exceeds 0.8% of the total. These are sample statistics and they describe this one run only.</p>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="task-4">Task 4: statistical cryptanalysis of the Caesar cipher</h2>
+  <p>The attack uses only the ciphertext and a corpus of English. The corpus is about 107,000 letters taken from three public-domain books (Austen, Carroll, Chesterton). The attack is tested on a different author (Melville), so that it is not tested on the text it learned from.</p>
+  <div class="cols2">
+    <h3>The algorithm</h3>
+    <ol>
+      <li>From the corpus compute the frequency f<sub>i</sub> of each letter i (with +1 smoothing so that no letter has probability 0).</li>
+      <li>Count the letters of the ciphertext: n letters in total.</li>
+      <li>For every candidate key s from 0 to 25, undo the shift. Plaintext letter i then corresponds to ciphertext letter i + s.</li>
+      <li>Measure the distance from English with the chi-squared statistic χ²(s) = Σ (observed<sub>i</sub> − n·f<sub>i</sub>)² / (n·f<sub>i</sub>).</li>
+      <li>Choose the key with the smallest χ². As a confidence value the page shows the ratio between the second-smallest and the smallest χ²: a ratio close to 1 means an uncertain answer.</li>
+    </ol>
+    <p>Intuition: with the right key the letter counts look like English (many E, T, A, few Z, Q), with a wrong key they do not. The attack never needs to read the text.</p>
+  </div>
+  <div class="panel">
+    <label>Ciphertext</label>
+    <textarea id="a-text"></textarea>
+    <button id="a-run" type="button">Attack</button>
+    <button id="a-use" type="button">Use the ciphertext of Task 2</button>
+    <p id="a-msg" class="msg" role="status"></p>
+    <div id="a-out"></div>
+  </div>
+  <h3>Effectiveness for different lengths</h3>
+  <p>For each length the attack is run 500 times on random passages of the test text, each encrypted with a random key (a fixed random seed makes the numbers reproducible).</p>
+  <div class="panel"><div id="x-out"></div></div>
+  <div class="cols2">
+    <p>The success rate grows quickly with the length: 45.0% at 5 letters, 74.0% at 10, 90.2% at 15, 94.0% at 20, 97.2% at 30, 99.2% at 50, 99.8% at 100 and 100% at 200 and 500. The reason is statistical: the letter counts of a short text fluctuate a lot around the language frequencies, and with few letters a wrong key can look more English than the right one by chance.</p>
+    <h3>Limitations</h3>
+    <ul>
+      <li><strong>Short texts</strong> are the main weakness, as the table shows. The message of the demos (24 letters) is a borderline case and the confidence ratio shown by the page is a useful warning.</li>
+      <li><strong>Atypical text or another language.</strong> The model assumes English letter frequencies. As an example, one Italian passage (Dante) attacked with the English model fails for all 26 keys when only 49 letters are used, and succeeds for all 26 keys at the lengths tested from 81 letters on (this is a single passage, not a general rule). A text that avoids common English letters can be misjudged at any length.</li>
+      <li><strong>Only letters are used.</strong> Spaces, digits and punctuation are ignored and add no information.</li>
+      <li><strong>The attack is not needed here.</strong> With 26 keys, trying all keys and reading the output is just as easy. The value of the method is that scoring candidates against a language model also works when the key space is too large to inspect by eye.</li>
+    </ul>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="task-5">Task 5: attack on the toy ECC scheme</h2>
+  <p>The private key d lies in [1, 2<sup>b</sup> − 1], so the attacker can try every candidate. Given the public key Q the attack computes G, 2G, 3G, … one point addition at a time until it reaches Q. The first multiple equal to Q gives d. With d the attacker computes S = d·C₁ and decrypts the message exactly like the receiver.</p>
+  <div class="cols2">
+    <h3>Cost</h3>
+    <p>One point addition per candidate (in Jacobian coordinates, so that no modular inversion is needed), and on average 2<sup>b−1</sup> candidates. The work does not depend on the message at all, and the answer is exact: dG = Q either holds or it does not, so there is no confidence value.</p>
+  </div>
+  <div class="panel">
+    <p>The attack uses the public key and the ciphertext generated in Task 1 (with the chosen key size). If they do not exist yet, they are generated now.</p>
+    <button id="b-run" type="button">Attack the public key</button>
+    <div class="progress"><div id="b-prog"></div></div>
+    <p id="b-msg" class="msg" role="status"></p>
+    <dl class="kv" id="b-out"></dl>
+    <h3>How long would it take for larger keys?</h3>
+    <p>Estimate from the speed measured on this device, for exhaustive search with an average of 2<sup>N−1</sup> candidates.</p>
+    <div class="table-wrap"><table class="t-compact" id="b-table"></table></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="discussion">Discussion and conclusions</h2>
+  <h3>The two attacks compared</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Statistical attack on Caesar</th><th>Brute force on the toy ECC key</th></tr></thead>
+      <tbody>
+        <tr><td>What it exploits</td><td>The structure of the language, kept by the cipher</td><td>Only the small number of possible private keys</td></tr>
+        <tr><td>What it needs</td><td>Ciphertext and a language model (corpus)</td><td>Public key Q (and C₁, C₂ to read the message)</td></tr>
+        <tr><td>Does the message matter?</td><td>Yes: length and type of text decide the success</td><td>No: the same work for any message</td></tr>
+        <tr><td>Result</td><td>Probabilistic: wrong for short or odd texts</td><td>Deterministic and exact: dG = Q is checked directly</td></tr>
+        <tr><td>Cost</td><td>26 candidates, each scored in 26 steps: negligible</td><td>About 2<sup>b−1</sup> point additions, growing exponentially with b</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cols2">
+    <p>The statistical attack works because the cipher leaks the statistics of the plaintext. It would work even if the key space were huge, as long as the cipher is a fixed substitution. The brute-force attack works for the opposite reason: the ECC ciphertext leaks nothing statistical (Task 3), but the key can be found by trying candidates because there are few of them. Fixing one weakness does not fix the other.</p>
+    <h3>Why this would not work against a proper ECC scheme</h3>
+    <p>With a private key in the full range of secp256k1 there are about 2²⁵⁶ ≈ 1.2 × 10⁷⁷ candidates. Exhaustive search needs on average 2²⁵⁵ of them: even at 10⁹ candidates per second that is about 2 × 10⁶⁰ years. The best known generic attack, Pollard's rho, needs about 2¹²⁸ steps, which is roughly 10¹⁹ years at 10¹² steps per second. Both are out of reach for any classical computer. Statistics do not help either, because the keystream is derived from a hash of the shared secret and the ciphertext is uniform.</p>
+    <p>The word "necessarily" matters: security depends on the configuration. A private key chosen from a small range, a weak random generator or a reused ephemeral key would make the scheme attackable even on a strong curve. And a large enough quantum computer running Shor's algorithm would break the discrete logarithm problem itself, but no such computer exists today.</p>
+  </div>
+  <h3>Conclusions</h3>
+  <p>Encryption and attack must be considered together. Caesar fails because it keeps the statistics of the language and has only 26 keys, so either weakness is enough. The toy ECC scheme hides the statistics, but restricting the private key to a small range reintroduces a trivial attack. What makes a real scheme secure is the combination of a hard problem (the discrete logarithm), a key chosen from a huge space, and a randomized, hash-based masking of the message.</p>
+  </section>
+</main>
+<footer>
+  <p>Matteo Miano · Student ID 2117312 · Sapienza University of Rome · Master's Degree in Cybersecurity · Statistics 2026/27</p>
+  <p>Toy examples for educational purposes. Never use a real seed phrase or private key.</p>
+</footer>
+<script src="../site.js"></script>
+<script src="corpus.js"></script>
+<script src="caesar.js"></script>
+<script src="ecc.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

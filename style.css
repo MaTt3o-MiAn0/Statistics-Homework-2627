@@ -175,3 +175,13 @@ select#t2-speed,select#t3-g{margin-right:.8rem}
 .totop{position:fixed;right:1rem;bottom:1rem;z-index:6;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;font-size:.9rem;padding:.5rem .9rem;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .25s}
 .totop.show{opacity:1;pointer-events:auto}
 @media (prefers-color-scheme:dark){.totop{color:#052e16}}
+
+/* Homework 3 */
+.kv{display:grid;grid-template-columns:6.5rem minmax(0,1fr);gap:.25rem .7rem;font-size:.88rem;margin:.6rem 0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;word-break:break-all;font-family:var(--mono);font-size:.82rem}
+.vb.best span{background:#b45309}
+textarea{font:inherit;width:100%;min-height:6rem;padding:.5rem;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:4px}
+.alpha{font-family:var(--mono)}
+.alpha td,.alpha th{padding:.15rem .3rem;font-size:.8rem}
+.out{font-family:var(--mono);word-break:break-all;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:.4rem .6rem;margin:.3rem 0}
