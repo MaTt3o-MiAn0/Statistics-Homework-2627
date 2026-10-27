@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homework 4: Penetration scores, LLN and CLT</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><a href="../index.html">Home</a><span>/</span><span class="brand">Homework 4: Penetration scores, LLN and CLT</span></header>
+<main data-model="bernoulli">
+  <div class="hero small">
+    <p class="eyebrow">Homework 4 · Probability</p>
+    <h1>Penetration scores, LLN and CLT</h1>
+    <p class="lead">Simulating n systems and m attackers with i.i.d. increments, and studying total, average and normalized scores.</p>
+  </div>
+  <nav class="toc" id="toc" aria-label="Contents"></nav>
+
+  <section>
+  <h2 id="summary">Summary</h2>
+  <p>Each of m attackers goes through n systems and collects an i.i.d. score at every step. The same random walk is studied with two score models (Bernoulli and Rademacher) and three scalings: the total score S<sub>n</sub>, the average S<sub>n</sub>/n and the normalized score S<sub>n</sub>/√n.</p>
+  <p>The scaling decides the behavior. The total spreads out (variance nσ²), the average concentrates on the mean (law of large numbers, variance σ²/n), and only the normalized score keeps a stable, non-trivial shape (variance σ²): in the Rademacher case it converges to the standard normal law (central limit theorem), while in the Bernoulli case it drifts unless it is centered. The number of attackers does not change one attacker: it sets how reliable the empirical distributions are.</p>
+  <h3>Results of the current run</h3>
+  <ul class="runlist" id="runSummary"><li>Computing…</li></ul>
+  </section>
+
+  <section>
+  <h2 id="model">The model</h2>
+  <p>There are n systems and m attackers. Attacker j goes through the systems in order and obtains the score X<sub>i</sub><sup>(j)</sup> at step i. The increments are independent and identically distributed with mean μ and variance σ², and different attackers are independent: the m attackers are m independent sample trajectories.</p>
+  <h3>Score models</h3>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Model 1</span><h4>Bernoulli</h4><p class="formula">X ∈ {0, 1}, P(X = 1) = p</p><p>The attacker penetrates system i with probability p, so S<sub>k</sub> counts the systems penetrated so far.</p><p><strong>μ = p, σ² = p(1 − p)</strong></p></div>
+    <div class="kcard"><span class="tag">Model 2</span><h4>Rademacher</h4><p class="formula">X ∈ {−1, +1}, ½ each</p><p>A symmetric gain or loss of foothold at each system, with no drift: the zero-mean case.</p><p><strong>μ = 0, σ² = 1</strong></p></div>
+  </div>
+  <h3>Scores and what theory predicts</h3>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Quantity 1</span><h4>Total score</h4><p class="formula">Sₙ = X₁ + … + Xₙ</p><p>Mean nμ, variance nσ²: Bernoulli np and np(1 − p), Rademacher 0 and n.</p><p>The spread grows like √n and there is no limit.</p></div>
+    <div class="kcard"><span class="tag">Quantity 2</span><h4>Average score</h4><p class="formula">Sₙ / n</p><p>Mean μ, variance σ²/n: Bernoulli p and p(1 − p)/n, Rademacher 0 and 1/n.</p><p><strong>Law of large numbers:</strong> Sₙ/n → μ in probability. Chebyshev bounds P(|Sₙ/n − μ| &gt; ε) by σ²/(nε²), and Hoeffding (steps of range b − a) by 2·exp(−2nε²/(b − a)²).</p></div>
+    <div class="kcard"><span class="tag">Quantity 3</span><h4>Normalized score</h4><p class="formula">Sₙ / √n</p><p>Mean μ√n, variance σ²: Bernoulli p√n and p(1 − p), Rademacher 0 and 1.</p><p><strong>Central limit theorem:</strong> (Sₙ − nμ)/(σ√n) → N(0, 1), so for Rademacher Sₙ/√n → N(0, 1). For Bernoulli with p &gt; 0 the mean p√n grows without bound: Sₙ/√n drifts to +∞ and only the centered version converges.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="trajectories">Sample trajectories</h2>
+  <p>Choose the model and the parameters, then run. The whole page shows one model at a time.</p>
+  <div class="panel">
+    <div class="controls">
+      <label>Probability model <select id="modelSel"><option value="bernoulli">Bernoulli</option><option value="rademacher">Rademacher</option></select></label>
+      <label>Number of systems (n) <input id="n" type="number" value="10000" min="100" max="20000" step="100"></label>
+      <label>Number of attackers (m) <input id="m" type="number" value="2000" min="10" max="5000" step="100"></label>
+      <label>Success probability (p) <input id="p" type="number" value="0.3" min="0.05" max="0.95" step="0.05"></label>
+      <label>Random seed <input id="seed" type="number" value="2026"></label>
+      <button id="runBtn" type="button">Run</button>
+      <button id="replay" type="button">Replay animation</button>
+      <span id="runStatus" class="legend">Ready to simulate.</span>
+    </div>
+    <p class="legend">The plots below draw up to 30 of the m attackers (dashed line: theoretical mean, shaded band: mean ± 2 standard deviations). The histograms, bounds and tables further down use all m attackers. The numbers quoted in the text refer to the default values (n = 10000, m = 2000, p = 0.3, seed 2026). Probability p applies to the Bernoulli model only.</p>
+  </div>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Total score</span><h4>Sₙ</h4><canvas id="tr-total" width="520" height="280" aria-label="Total score trajectories"></canvas>
+      <p class="only-b">The paths grow roughly linearly with slope p and fan out like √k around the line kp.</p>
+      <p class="only-r">Symmetric random walks without drift, wandering inside about ±2√k.</p></div>
+    <div class="kcard"><span class="tag">Average score</span><h4>Sₙ / n</h4><canvas id="tr-avg" width="520" height="280" aria-label="Average score trajectories"></canvas>
+      <p class="only-b">Erratic at first, then collapsing onto p inside a band that shrinks like 1/√k: the law of large numbers along the trajectories.</p>
+      <p class="only-r">Erratic at first, then collapsing onto 0 inside a band that shrinks like 1/√k.</p></div>
+    <div class="kcard"><span class="tag">Normalized score</span><h4>Sₙ / √n</h4><canvas id="tr-norm" width="520" height="280" aria-label="Normalized score trajectories"></canvas>
+      <p class="only-b">The spread stays constant, but the paths drift upward like p√k.</p>
+      <p class="only-r">Oscillates around 0 with a constant standard deviation of 1.</p></div>
+  </div>
+  <p class="note">The band holds at each fixed k for about 95% of the paths, not for all k together. A single path does leave it at some k: by the law of the iterated logarithm, S<sub>k</sub>/√k exceeds any fixed level infinitely often (in the Rademacher case), but ever more rarely.</p>
+  </section>
+
+  <section>
+  <h2 id="distributions">Distributions for increasing n</h2>
+  <p>Histograms of the m simulated attackers at four sizes (n/1000, n/100, n/10 and n), with the normal density of the theoretical mean and variance (black curve). The axis of the average and of the normalized score is the same in every column, so that concentration and drift are visible.</p>
+  <div class="kgrid k1">
+    <div class="kcard"><span class="tag">Total score</span><h4>Sₙ</h4><div class="dgrid" id="dg-total"></div>
+      <p class="stat" id="st-total"></p>
+      <p class="only-b">The histograms get wider: Var(Sₙ) = np(1 − p). The axis is rescaled with n.</p>
+      <p class="only-r">The histograms get wider: Var(Sₙ) = n. The axis is rescaled with n.</p></div>
+    <div class="kcard"><span class="tag">Average score</span><h4>Sₙ / n</h4><div class="dgrid" id="dg-avg"></div>
+      <p class="stat" id="st-avg"></p>
+      <p class="only-b">Narrower and narrower around p, with a width of order σ/√n.</p>
+      <p class="only-r">Narrower and narrower around 0, with a width of order 1/√n.</p></div>
+    <div class="kcard"><span class="tag">Normalized score</span><h4>Sₙ / √n</h4><div class="dgrid" id="dg-norm"></div>
+      <p class="stat" id="st-norm"></p>
+      <p class="only-b">The same width for every n, but the whole histogram moves right: its mean is p√n.</p>
+      <p class="only-r">The same width for every n, and the shape approaches the standard normal curve (the smallest n is still visibly discrete).</p></div>
+    <div class="kcard"><span class="tag">Variance of the three scores</span><h4>Simulated (dots) and theoretical (lines), both axes logarithmic</h4><canvas id="d-var" width="760" height="300" aria-label="Variance of the three scores as a function of n"></canvas>
+      <p class="only-b">The variance of S<sub>n</sub> grows like n (2.07 at n = 10 to 2087 at n = 10000), that of S<sub>n</sub>/n falls like 1/n, and that of S<sub>n</sub>/√n stays at p(1 − p) = 0.21 (between 0.207 and 0.213).</p>
+      <p class="only-r">The variance of S<sub>n</sub> grows like n (9.9 at n = 10 to 10448 at n = 10000), that of S<sub>n</sub>/n falls like 1/n, and that of S<sub>n</sub>/√n stays near 1 (between 0.97 and 1.05). With m = 2000 attackers the sample variance has a standard error of about 3.2%, so these deviations are noise.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="law-of-large-numbers">Law of large numbers</h2>
+  <div class="split">
+    <div class="kcard"><span class="tag">Convergence in probability</span><h4>Share of attackers with |Sₙ/n − μ| &gt; ε</h4>
+      <label>ε <input id="eps" type="number" value="0.05" min="0.01" max="0.5" step="0.01" style="width:5rem"></label>
+      <canvas id="l-chart" width="560" height="300" aria-label="Probability of deviation from the mean as a function of n"></canvas>
+      <p class="legend">Green: simulated. Amber: Chebyshev bound. Black: Hoeffding bound. Points at 0 are not drawn on the logarithmic axis.</p></div>
+    <div class="kgrid k1">
+      <div class="kcard"><span class="tag">Result</span>
+        <p class="only-b">With ε = 0.05 the probability falls from 0.737 at n = 10 to 0.234 at n = 100, 0.015 at n = 500 and 0.001 at n = 1000. From n = 2000 no attacker out of 2000 is farther than ε from p.</p>
+        <p class="only-r">With ε = 0.05 the probability falls from 0.617 at n = 100 to 0.114 at n = 1000, 0.023 at n = 2000 and 0.001 at n = 5000: it is slower than for Bernoulli because σ² is larger.</p></div>
+      <div class="kcard"><span class="tag">Speed depends on σ²</span><p>The same probability (about 0.11) needs n = 200 for Bernoulli with p = 0.3 and n = 1000 for Rademacher. The ratio of 5 is close to σ²<sub>Rad</sub>/σ²<sub>Bern</sub> = 1/0.21 ≈ 4.8, as the Chebyshev bound σ²/(nε²) suggests.</p></div>
+      <div class="kcard"><span class="tag">The bounds</span><p>Both are valid but conservative. Chebyshev falls only like 1/n. Hoeffding falls exponentially and is much closer for large n, but it is larger than 1 for small n and so is capped at 1.</p></div>
+    </div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="central-limit-theorem">Central limit theorem</h2>
+  <p class="only-r">In the Rademacher model μ = 0 and σ = 1, so the theorem says that S<sub>n</sub>/√n converges in distribution to N(0, 1).</p>
+  <p class="only-b">In the Bernoulli model S<sub>n</sub>/√n drifts, so the theorem is studied for the standardized score (S<sub>n</sub> − np)/√(np(1 − p)), which converges to N(0, 1).</p>
+  <p>The distance from the normal law is the Kolmogorov–Smirnov statistic D<sub>n</sub> = sup<sub>x</sub> |F<sub>n</sub>(x) − Φ(x)|, where F<sub>n</sub> is the empirical distribution function. Ten times as many attackers as m are used, so that the sampling noise is small.</p>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Empirical distribution functions</span><h4>Coloured curves at different n, standard normal Φ dashed</h4>
+      <canvas id="c-cdf" width="560" height="300" aria-label="Empirical distribution functions against the standard normal"></canvas></div>
+    <div class="kcard"><span class="tag">Distance from the normal law</span><h4>D<sub>n</sub> against n, both axes logarithmic</h4>
+      <canvas id="c-chart" width="560" height="300" aria-label="Kolmogorov-Smirnov distance as a function of n"></canvas>
+      <p class="legend" id="c-info"></p></div>
+  </div>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Convergence</span>
+      <p class="only-r">D<sub>n</sub> falls from 0.34 at n = 1 to 0.125 at n = 10, 0.040 at n = 100 and 0.017 at n = 1000: S<sub>n</sub>/√n gets closer to the standard normal.</p>
+      <p class="only-b">D<sub>n</sub> falls from 0.44 at n = 1 to 0.148 at n = 10, 0.049 at n = 100 and 0.021 at n = 1000: the standardized score gets closer to the standard normal.</p></div>
+    <div class="kcard"><span class="tag">Rate 1/√n</span>
+      <p class="only-r">S<sub>n</sub> has the parity of n, so its distribution function has jumps while Φ is continuous. At the center the jump is about 0.8/√n, so D<sub>n</sub> cannot go below about 0.399/√n (amber line). For n ≤ 200, D<sub>n</sub>·√n stays between 0.34 and 0.44: the 1/√n rate of the Berry–Esseen bound is reached.</p>
+      <p class="only-b">S<sub>n</sub> takes integer values, so its distribution function has jumps while Φ is continuous. The largest jump is about 1/(σ√(2πn)), so D<sub>n</sub> cannot go below about 0.435/√n for p = 0.3 (amber line). For n ≤ 200, D<sub>n</sub>·√n stays between 0.44 and 0.50, the same 1/√n rate, slightly higher than for Rademacher because the Bernoulli law is skewed (the Berry–Esseen constant ρ/σ³ is 1.27 instead of 1).</p></div>
+    <div class="kcard"><span class="tag">Reading the test</span>
+      <p class="only-r">At n = 1000 the distance (0.017) is above the 5% critical value of the test (0.0096), so exact normality would be rejected. This is only because S<sub>n</sub>/√n is discrete, not a failure of the theorem, which states convergence and not equality.</p>
+      <p class="only-b">At n = 1000 the distance (0.021) is above the 5% critical value of the test (0.0096), so exact normality would be rejected. As in the Rademacher case this is a lattice effect, not a failure of the theorem.</p></div>
+    <div class="kcard"><span class="tag">Standardization</span><p>For Rademacher, μ = 0 and σ = 1, so S<sub>n</sub>/√n is already standardized. For Bernoulli the score must be centered and rescaled: (S<sub>n</sub> − np)/√(np(1 − p)) → N(0, 1) (De Moivre–Laplace). The raw S<sub>n</sub>/√n has mean p√n and drifts.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="systems-and-attackers">Systems and attackers</h2>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Number of systems n</span><p>For one attacker the expected number of penetrations is np (Bernoulli) and the fluctuation grows like √n, but the relative fluctuation √((1 − p)/(pn)) shrinks: the fraction penetrated becomes predictable. For Rademacher the net score has no drift and its typical size grows like √n.</p></div>
+    <div class="kcard"><span class="tag">Number of attackers m</span><p>m does not change one attacker. It sharpens the estimate of the distribution and sets the fluctuation of the aggregate score T = Σ<sub>j</sub> S<sub>n</sub><sup>(j)</sup>, whose average per system and attacker, T/(mn), has standard deviation σ/√(mn).</p></div>
+    <div class="kcard"><span class="tag">Limits of the model</span><p>Independence and equal distribution are assumptions. If attackers share tools and information they are positively correlated, and adding attackers cannot reduce the fluctuation below the part they have in common.</p></div>
+  </div>
+  <div class="kgrid k1">
+    <div class="kcard"><span class="tag">Aggregate score</span><h4>Standard deviation of T/(mn) against the product mn, both axes logarithmic</h4>
+      <canvas id="g-chart" width="760" height="300" aria-label="Standard deviation of the average aggregate score as a function of mn"></canvas>
+      <p>Green dots: simulated for n ∈ {10, 100, 1000} and m ∈ {1, 10, 100} (200 repetitions each). Dashed line: σ/√(mn). All nine dots lie on the line, so only the product mn matters; each factor 10 in n or m reduces the fluctuation by √10 ≈ 3.2. With 200 repetitions the simulated value itself is known to about ±5%.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="conclusions">Conclusions</h2>
+  <p>The total score has variance nσ² and spreads out, the average has variance σ²/n and converges in probability to μ at a speed set by σ², and the normalized score has the constant variance σ². In the zero-mean Rademacher case the normalized score converges to N(0, 1) at the 1/√n rate; in the Bernoulli case the nonzero mean makes it drift, and only the centered version converges.</p>
+  <p>For n systems and m attackers: a larger system makes the fraction of penetrated systems predictable while the absolute count fluctuates more, and more attackers sharpen the aggregate estimate like 1/√m, provided they are independent.</p>
+  </section>
+</main>
+<footer>
+  <p>Matteo Miano · Student ID 2117312 · Sapienza University of Rome · Master's Degree in Cybersecurity · Statistics 2026/27</p>
+  <p>Toy examples for educational purposes. Never use a real seed phrase or private key.</p>
+</footer>
+<script src="../site.js"></script>
+<script src="sim.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
