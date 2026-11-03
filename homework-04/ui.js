@@ -1,222 +1,672 @@
+// Homework 4 page: trajectories, distributions, law of large numbers, central limit theorem, aggregate score.
 (function () {
-  var $ = function (id) { return document.getElementById(id); };
-  var css = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
-  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var AMBER = "#d97706";
-  function fx(v) { var a = Math.abs(v); return a >= 1000 ? String(Math.round(v)) : (a < 0.01 && a > 0) ? v.toExponential(1) : String(+v.toPrecision(3)); }
-  function tick(v) { return v >= 1 && v < 1e5 ? String(v) : v < 1 && v >= 1e-4 ? String(+v.toFixed(4)) : v.toExponential(0).replace("e+", "e"); }
-  function setup(cv) { var c = cv.getContext("2d"); c.clearRect(0, 0, cv.width, cv.height); c.font = "11px system-ui, sans-serif"; return c; }
-  function params() {
-    var model = $("modelSel").value;
-    $("p").disabled = model === "rademacher";
-    var num = function (id, d, lo, hi) { var v = Number($(id).value); return Math.min(hi, Math.max(lo, Number.isFinite(v) && v !== 0 ? v : d)); };
-    return { model: model, p: num("p", 0.3, 0.05, 0.95), n: Math.floor(num("n", 10000, 100, 20000)), m: Math.floor(num("m", 2000, 10, 5000)), seed: Math.floor(Number($("seed").value)) || 2026 };
+  const element = (id) => document.getElementById(id);
+  const format = (value) => formatNumber(value, 3);
+  const prefersReducedMotion =
+    window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const LLN_SIZES = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+  const CLT_SIZES = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+  const ECDF_COLORS = ["#f59e0b", "#ef4444", "#3b82f6", "#8b5cf6", "#15803d"];
+  const state = { ready: false };
+
+  // ---------- inputs ----------
+
+  function readNumber(id, fallback, min, max) {
+    const value = Number(element(id).value);
+    const valid = Number.isFinite(value) && value !== 0 ? value : fallback;
+    return Math.min(max, Math.max(min, valid));
   }
 
-  // ---------- log-log line/dot plot ----------
-  function logPlot(cv, o) {
-    var ctx = setup(cv), W = cv.width, H = cv.height, L = 58, R = 14, T = 12, B = 38, lg = Math.log10;
-    var X = function (x) { return L + (lg(x) - lg(o.x0)) / (lg(o.x1) - lg(o.x0)) * (W - L - R); };
-    var Y = function (y) { return T + (1 - (lg(y) - lg(o.y0)) / (lg(o.y1) - lg(o.y0))) * (H - T - B); };
-    ctx.strokeStyle = css("--line"); ctx.fillStyle = css("--muted"); ctx.lineWidth = 1;
-    ctx.textAlign = "right"; for (var k = Math.ceil(lg(o.y0)); k <= Math.floor(lg(o.y1)); k++) { var y = Math.pow(10, k); ctx.beginPath(); ctx.moveTo(L, Y(y)); ctx.lineTo(W - R, Y(y)); ctx.stroke(); ctx.fillText(tick(y), L - 5, Y(y) + 4); }
-    ctx.textAlign = "center"; for (k = Math.ceil(lg(o.x0)); k <= Math.floor(lg(o.x1)); k++) { var x = Math.pow(10, k); ctx.beginPath(); ctx.moveTo(X(x), T); ctx.lineTo(X(x), H - B); ctx.stroke(); ctx.fillText(tick(x), X(x), H - B + 14); }
-    ctx.fillText(o.xlabel, (L + W - R) / 2, H - 6);
-    o.series.forEach(function (s) {
-      var pts = s.pts.filter(function (q) { return q[1] > 0 && Number.isFinite(q[1]); });
-      ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = 2; ctx.setLineDash(s.dash || []);
-      if (s.line) { ctx.beginPath(); pts.forEach(function (q, i) { var yy = Math.min(Math.max(q[1], o.y0), o.y1); i ? ctx.lineTo(X(q[0]), Y(yy)) : ctx.moveTo(X(q[0]), Y(yy)); }); ctx.stroke(); }
-      ctx.setLineDash([]);
-      if (s.dots) pts.forEach(function (q) { if (q[1] >= o.y0 && q[1] <= o.y1) { ctx.beginPath(); ctx.arc(X(q[0]), Y(q[1]), 4.5, 0, 6.2832); ctx.fill(); } });
-    });
-    ctx.textAlign = "left"; o.series.forEach(function (s, i) { ctx.fillStyle = s.color; ctx.fillRect(L + 10, T + 8 + i * 16, 14, 4); ctx.fillStyle = css("--ink"); ctx.fillText(s.name, L + 30, T + 13 + i * 16); });
+  function readParameters() {
+    const model = element("modelSel").value;
+    element("p").disabled = model === "rademacher";
+    return {
+      model,
+      p: readNumber("p", 0.3, 0.05, 0.95),
+      n: Math.floor(readNumber("n", 10000, 100, 20000)),
+      m: Math.floor(readNumber("m", 2000, 10, 5000)),
+      seed: Math.floor(Number(element("seed").value)) || 2026,
+    };
   }
+
+  // Each model uses its own random stream, so switching model does not change the other one.
+  const modelOffset = (params) => (params.model === "bernoulli" ? 0 : 100);
 
   // ---------- sample trajectories (animated) ----------
-  var plots = [], anim = null, reveal = 0, t0 = 0, S = { ready: false };
-  function drawPaths(o, kk) {
-    var cv = o.cv, ctx = setup(cv), W = cv.width, H = cv.height, L = 54, R = 10, T = 12, B = 26, kmax = Math.max(2, Math.floor(o.n * kk));
-    var X = function (i) { return L + (i - 1) / (o.n - 1) * (W - L - R); };
-    var Y = function (v) { return T + (1 - (v - o.y0) / (o.y1 - o.y0)) * (H - T - B); };
-    ctx.fillStyle = css("--muted"); ctx.strokeStyle = css("--line"); ctx.textAlign = "right"; ctx.lineWidth = 1;
-    for (var t = 0; t <= 4; t++) { var v = o.y0 + (o.y1 - o.y0) * t / 4; ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(W - R, Y(v)); ctx.stroke(); ctx.fillText(fx(v), L - 5, Y(v) + 4); }
-    ctx.textAlign = "center"; [1, Math.round(o.n / 2), o.n].forEach(function (i) { ctx.fillText(i, X(i), H - 8); });
-    ctx.save(); ctx.beginPath(); ctx.rect(L, T, W - L - R, H - T - B); ctx.clip();
-    ctx.fillStyle = css("--accent"); ctx.globalAlpha = 0.13; ctx.beginPath();
-    o.ks.forEach(function (i, j) { var y = Y(o.center(i) + 2 * o.spread(i)); j ? ctx.lineTo(X(i), y) : ctx.moveTo(X(i), y); });
-    for (var j = o.ks.length - 1; j >= 0; j--) ctx.lineTo(X(o.ks[j]), Y(o.center(o.ks[j]) - 2 * o.spread(o.ks[j])));
-    ctx.fill(); ctx.globalAlpha = 1;
-    ctx.setLineDash([5, 4]); ctx.strokeStyle = css("--ink"); ctx.beginPath();
-    o.ks.forEach(function (i, j) { var y = Y(o.center(i)); j ? ctx.lineTo(X(i), y) : ctx.moveTo(X(i), y); }); ctx.stroke(); ctx.setLineDash([]);
-    ctx.strokeStyle = css("--accent"); ctx.lineWidth = 1.2; ctx.globalAlpha = 0.75;
-    o.paths.forEach(function (p) { ctx.beginPath(); var first = true; for (var q = 0; q < o.ks.length && o.ks[q] <= kmax; q++) { var i = o.ks[q], yy = Y(p[i - 1]); first ? ctx.moveTo(X(i), yy) : ctx.lineTo(X(i), yy); first = false; } ctx.stroke(); });
-    ctx.restore();
-  }
-  function frame(now) { reveal = reduce ? 1 : Math.min(1, (now - t0) / 3000); plots.forEach(function (o) { drawPaths(o, reveal); }); anim = reveal < 1 ? requestAnimationFrame(frame) : null; }
-  function replay() { if (anim) cancelAnimationFrame(anim); t0 = performance.now(); anim = requestAnimationFrame(frame); }
-  function buildPaths(P) {
-    var M = makeModel(P.model, P.p), n = P.n, mp = Math.min(P.m, 30), s = Math.sqrt(M.sigma2), r = mulberry32(P.seed + 5 + (P.model === "bernoulli" ? 0 : 1)), raw = [], ks = [];
-    for (var j = 0; j < mp; j++) raw.push(path(M, n, r));
-    for (var i = 1; i <= n; i += (i < 100 ? 1 : Math.ceil(n / 1500))) ks.push(i); if (ks[ks.length - 1] !== n) ks.push(n);
-    var q = [
-      { id: "total", f: function (S) { return S; }, c: function (k) { return k * M.mu; }, sp: function (k) { return s * Math.sqrt(k); } },
-      { id: "avg", f: function (S, k) { return S / k; }, c: function () { return M.mu; }, sp: function (k) { return s / Math.sqrt(k); } },
-      { id: "norm", f: function (S, k) { return S / Math.sqrt(k); }, c: function (k) { return M.mu * Math.sqrt(k); }, sp: function () { return s; } }
-    ];
-    plots = q.map(function (qq) {
-      var paths = raw.map(function (S) { return S.map(function (v, i) { return qq.f(v, i + 1); }); });
-      var y0 = Infinity, y1 = -Infinity;
-      if (qq.id === "avg") { y0 = M.mu - 0.5; y1 = M.mu + 0.5; }
-      else { paths.forEach(function (p) { ks.forEach(function (i) { var v = p[i - 1]; if (v < y0) y0 = v; if (v > y1) y1 = v; }); }); ks.forEach(function (k) { y0 = Math.min(y0, qq.c(k) - 2 * qq.sp(k)); y1 = Math.max(y1, qq.c(k) + 2 * qq.sp(k)); }); }
-      return { cv: $("tr-" + qq.id), n: n, ks: ks, paths: paths, y0: y0, y1: y1, center: qq.c, spread: qq.sp };
-    });
-    replay();
+
+  let bandPlots = [];
+  let animation = null;
+  let animationStart = 0;
+
+  function animate(now) {
+    const fraction = prefersReducedMotion ? 1 : Math.min(1, (now - animationStart) / 3000);
+    for (const plot of bandPlots) {
+      drawBandPlot(plot, fraction);
+    }
+    animation = fraction < 1 ? requestAnimationFrame(animate) : null;
   }
 
-  // ---------- histograms for increasing n ----------
-  function hist(cv, tot, n, M, qi, axis) {
-    cv.width = 260; cv.height = 150;
-    var ctx = setup(cv), W = 260, H = 150, L = 8, R = 8, T = 22, B = 22, lo = axis[0], hi = axis[1];
-    var scale = qi === 0 ? 1 : qi === 1 ? n : Math.sqrt(n), h = M.h / scale, base = (M.name === "bernoulli" ? 0 : -n) / scale, x0 = base - h / 2;
-    var w = h * Math.max(1, Math.ceil((hi - lo) / 60 / h)), counts = {}, top = 0;
-    for (var j = 0; j < tot.length; j++) { var b = Math.floor((tot[j] / scale - x0) / w + 1e-9); counts[b] = (counts[b] || 0) + 1; }
-    var mu = qi === 0 ? n * M.mu : qi === 1 ? M.mu : M.mu * Math.sqrt(n), vr = qi === 0 ? n * M.sigma2 : qi === 1 ? M.sigma2 / n : M.sigma2;
-    Object.keys(counts).forEach(function (b) { var xl = x0 + b * w; if (xl + w >= lo && xl <= hi) top = Math.max(top, counts[b] / (tot.length * w)); });
-    top = Math.max(top, phi(mu, mu, vr)) * 1.1;
-    var X = function (x) { return L + (x - lo) / (hi - lo) * (W - L - R); }, Y = function (d) { return H - B - d / top * (H - B - T); };
-    ctx.fillStyle = css("--accent"); ctx.globalAlpha = 0.8;
-    Object.keys(counts).forEach(function (b) { var xl = x0 + b * w, d = counts[b] / (tot.length * w); if (xl + w >= lo && xl <= hi) { var xa = Math.max(X(xl), L), xb = Math.min(X(xl + w), W - R); ctx.fillRect(xa, Y(d), Math.max(1, xb - xa - 0.5), H - B - Y(d)); } });
-    ctx.globalAlpha = 1; ctx.strokeStyle = css("--ink"); ctx.lineWidth = 1.5; ctx.beginPath();
-    for (var px = 0; px <= 120; px++) { var x = lo + (hi - lo) * px / 120, yy = Y(phi(x, mu, vr)); px ? ctx.lineTo(X(x), yy) : ctx.moveTo(X(x), yy); }
-    ctx.stroke(); ctx.strokeStyle = css("--line"); ctx.beginPath(); ctx.moveTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
-    ctx.fillStyle = css("--muted"); ctx.textAlign = "left"; ctx.fillText(fx(lo), L, H - 8); ctx.textAlign = "right"; ctx.fillText(fx(hi), W - R, H - 8);
-    ctx.textAlign = "center"; ctx.fillText(fx(mu), X(mu), H - 8); ctx.textAlign = "left"; ctx.fillStyle = css("--ink"); ctx.fillText("n = " + n, L, 13);
+  function replayAnimation() {
+    if (animation) {
+      cancelAnimationFrame(animation);
+    }
+    animationStart = performance.now();
+    animation = requestAnimationFrame(animate);
   }
-  function distributions(P) {
-    var M = makeModel(P.model, P.p), s = Math.sqrt(M.sigma2), n = P.n;
-    var cps = [0.001, 0.01, 0.1, 1].map(function (f) { return Math.max(1, Math.round(n * f)); }).filter(function (v, i, a) { return a.indexOf(v) === i; });
-    var tot = sampleTotals(M, cps, P.m, P.seed + (P.model === "bernoulli" ? 0 : 100));
-    (function () {
-      var nn = cps[cps.length - 1], a = tot[cps.length - 1], TT = theory(M, nn), mS = mean(a);
-      var vS = variance(a), vA = variance(a.map(function (v) { return v / nn; })), vN = variance(a.map(function (v) { return v / Math.sqrt(nn); }));
-      var line = function (mm, me, vv, vt) { return "At n = " + nn + ": sample mean " + fx(mm) + " (expected " + fx(me) + "), sample variance " + fx(vv) + " (theory " + fx(vt) + ")."; };
-      $("st-total").textContent = line(mS, TT.total.mean, vS, TT.total.var);
-      $("st-avg").textContent = line(mS / nn, TT.average.mean, vA, TT.average.var);
-      $("st-norm").textContent = line(mS / Math.sqrt(nn), TT.normalized.mean, vN, TT.normalized.var);
-      S.dist = { n: nn, vS: vS, vST: TT.total.var, mA: mS / nn, vA: vA, vAT: TT.average.var, mN: mS / Math.sqrt(nn), mNT: TT.normalized.mean, vN: vN, vNT: TT.normalized.var };
-    })();
-    ["total", "avg", "norm"].forEach(function (id, qi) {
-      var box = $("dg-" + id); box.innerHTML = "";
-      cps.forEach(function (c, ci) {
-        var cv = document.createElement("canvas"); box.appendChild(cv);
-        var axis = qi === 0 ? [c * M.mu - 4 * s * Math.sqrt(c), c * M.mu + 4 * s * Math.sqrt(c)] : qi === 1 ? [M.mu - 0.5, M.mu + 0.5] :
-          P.model === "rademacher" ? [-4, 4] : [-2, M.mu * Math.sqrt(n) + 4 * s];
-        hist(cv, tot[ci], c, M, qi, axis);
+
+  // Every step for the first 100 systems, then about 1500 points, so long trajectories stay light.
+  function trajectoryIndices(n) {
+    const ks = [];
+    for (let k = 1; k <= n; k += k < 100 ? 1 : Math.ceil(n / 1500)) {
+      ks.push(k);
+    }
+    if (ks[ks.length - 1] !== n) {
+      ks.push(n);
+    }
+    return ks;
+  }
+
+  // The three scalings: value of the score, theoretical center and standard deviation at step k.
+  function scalings(model) {
+    const sigma = Math.sqrt(model.variance);
+    return [
+      {
+        id: "total",
+        value: (total) => total,
+        center: (k) => k * model.mean,
+        spread: (k) => sigma * Math.sqrt(k),
+      },
+      {
+        id: "avg",
+        value: (total, k) => total / k,
+        center: () => model.mean,
+        spread: (k) => sigma / Math.sqrt(k),
+      },
+      {
+        id: "norm",
+        value: (total, k) => total / Math.sqrt(k),
+        center: (k) => model.mean * Math.sqrt(k),
+        spread: () => sigma,
+      },
+    ];
+  }
+
+  function verticalRange(scaling, paths, ks, model) {
+    if (scaling.id === "avg") {
+      return [model.mean - 0.5, model.mean + 0.5];
+    }
+    let low = Infinity;
+    let high = -Infinity;
+    for (const path of paths) {
+      for (const k of ks) {
+        low = Math.min(low, path[k - 1]);
+        high = Math.max(high, path[k - 1]);
+      }
+    }
+    for (const k of ks) {
+      low = Math.min(low, scaling.center(k) - 2 * scaling.spread(k));
+      high = Math.max(high, scaling.center(k) + 2 * scaling.spread(k));
+    }
+    return [low, high];
+  }
+
+  function showTrajectories(params) {
+    const model = createModel(params.model, params.p);
+    const random = createRandom(params.seed + 5 + (params.model === "bernoulli" ? 0 : 1));
+    const totals = [];
+    for (let j = 0; j < Math.min(params.m, 30); j++) {
+      totals.push(simulatePath(model, params.n, random));
+    }
+    const ks = trajectoryIndices(params.n);
+
+    bandPlots = scalings(model).map((scaling) => {
+      const paths = totals.map((path) => path.map((total, i) => scaling.value(total, i + 1)));
+      const [y0, y1] = verticalRange(scaling, paths, ks, model);
+      return {
+        canvas: element("tr-" + scaling.id),
+        n: params.n,
+        firstK: 1,
+        ks,
+        paths,
+        center: scaling.center,
+        spread: scaling.spread,
+        y0,
+        y1,
+        digits: 3,
+      };
+    });
+    replayAnimation();
+  }
+
+  // ---------- distributions for increasing n ----------
+
+  // n/1000, n/100, n/10 and n (without repetitions for small n).
+  function histogramSizes(n) {
+    const sizes = [0.001, 0.01, 0.1, 1].map((share) => Math.max(1, Math.round(n * share)));
+    return sizes.filter((size, i) => sizes.indexOf(size) === i);
+  }
+
+  // The same horizontal axis for every n, except for the total score, whose spread grows with n.
+  function histogramAxis(scalingIndex, size, largest, model, modelName) {
+    const sigma = Math.sqrt(model.variance);
+    if (scalingIndex === 0) {
+      return [
+        size * model.mean - 4 * sigma * Math.sqrt(size),
+        size * model.mean + 4 * sigma * Math.sqrt(size),
+      ];
+    }
+    if (scalingIndex === 1) {
+      return [model.mean - 0.5, model.mean + 0.5];
+    }
+    return modelName === "rademacher" ? [-4, 4] : [-2, model.mean * Math.sqrt(largest) + 4 * sigma];
+  }
+
+  // Histogram of a lattice variable: each bin holds a whole number of possible values,
+  // so that discrete distributions are not distorted. The black curve is the normal density.
+  function drawLatticeHistogram(canvas, totals, n, model, scalingIndex, axis) {
+    canvas.width = 260;
+    canvas.height = 150;
+    const context = clearCanvas(canvas);
+    const width = 260;
+    const height = 150;
+    const left = 8;
+    const right = 8;
+    const top = 22;
+    const bottom = 22;
+    const [low, high] = axis;
+    const scale = [1, n, Math.sqrt(n)][scalingIndex];
+    const step = model.latticeStep / scale;
+    const firstEdge = (model.name === "bernoulli" ? 0 : -n) / scale - step / 2;
+    const binWidth = step * Math.max(1, Math.ceil((high - low) / 60 / step));
+    const moments = Object.values(theoreticalMoments(model, n))[scalingIndex];
+
+    const counts = {};
+    for (const total of totals) {
+      const bin = Math.floor((total / scale - firstEdge) / binWidth + 1e-9);
+      counts[bin] = (counts[bin] || 0) + 1;
+    }
+    const visibleBins = Object.keys(counts).filter((bin) => {
+      const binStart = firstEdge + bin * binWidth;
+      return binStart + binWidth >= low && binStart <= high;
+    });
+    const densityOf = (bin) => counts[bin] / (totals.length * binWidth);
+    let peak = Math.max(0, ...visibleBins.map(densityOf));
+    peak = Math.max(peak, normalDensity(moments.mean, moments.mean, moments.variance)) * 1.1;
+    const toX = (x) => left + ((x - low) / (high - low)) * (width - left - right);
+    const toY = (density) => height - bottom - (density / peak) * (height - bottom - top);
+
+    context.fillStyle = cssColor("--accent");
+    context.globalAlpha = 0.8;
+    for (const bin of visibleBins) {
+      const binStart = firstEdge + bin * binWidth;
+      const xStart = Math.max(toX(binStart), left);
+      const xEnd = Math.min(toX(binStart + binWidth), width - right);
+      const y = toY(densityOf(bin));
+      context.fillRect(xStart, y, Math.max(1, xEnd - xStart - 0.5), height - bottom - y);
+    }
+    context.globalAlpha = 1;
+
+    context.strokeStyle = cssColor("--ink");
+    context.lineWidth = 1.5;
+    context.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const x = low + ((high - low) * i) / 120;
+      const y = toY(normalDensity(x, moments.mean, moments.variance));
+      if (i === 0) {
+        context.moveTo(toX(x), y);
+      } else {
+        context.lineTo(toX(x), y);
+      }
+    }
+    context.stroke();
+    context.strokeStyle = cssColor("--line");
+    context.beginPath();
+    context.moveTo(left, height - bottom);
+    context.lineTo(width - right, height - bottom);
+    context.stroke();
+
+    context.fillStyle = cssColor("--muted");
+    context.textAlign = "left";
+    context.fillText(format(low), left, height - 8);
+    context.textAlign = "right";
+    context.fillText(format(high), width - right, height - 8);
+    context.textAlign = "center";
+    context.fillText(format(moments.mean), toX(moments.mean), height - 8);
+    context.textAlign = "left";
+    context.fillStyle = cssColor("--ink");
+    context.fillText("n = " + n, left, 13);
+  }
+
+  // Sample mean and variance against theory, at the largest n, for the three scores.
+  function showDistributionStats(model, n, totals) {
+    const moments = theoreticalMoments(model, n);
+    const totalMean = mean(totals);
+    const averages = totals.map((total) => total / n);
+    const normalized = totals.map((total) => total / Math.sqrt(n));
+    const line = (sampleMean, expected, sampleVariance, theoryVariance) =>
+      `At n = ${n}: sample mean ${format(sampleMean)} (expected ${format(expected)}), ` +
+      `sample variance ${format(sampleVariance)} (theory ${format(theoryVariance)}).`;
+
+    const result = {
+      n,
+      totalVariance: variance(totals),
+      averageMean: totalMean / n,
+      averageVariance: variance(averages),
+      normalizedMean: totalMean / Math.sqrt(n),
+      normalizedVariance: variance(normalized),
+      moments,
+    };
+    element("st-total").textContent = line(
+      totalMean,
+      moments.total.mean,
+      result.totalVariance,
+      moments.total.variance,
+    );
+    element("st-avg").textContent = line(
+      result.averageMean,
+      moments.average.mean,
+      result.averageVariance,
+      moments.average.variance,
+    );
+    element("st-norm").textContent = line(
+      result.normalizedMean,
+      moments.normalized.mean,
+      result.normalizedVariance,
+      moments.normalized.variance,
+    );
+    return result;
+  }
+
+  function showVarianceChart(model, sizes, totalsBySize) {
+    const colors = [cssColor("--accent"), AMBER, cssColor("--ink")];
+    const names = ["Var(Sₙ)", "Var(Sₙ/n)", "Var(Sₙ/√n)"];
+    const scales = [(n) => 1, (n) => n, (n) => Math.sqrt(n)];
+    const theoryKeys = ["total", "average", "normalized"];
+    const series = [];
+    const allValues = [];
+
+    names.forEach((name, i) => {
+      const theory = sizes.map((n) => [n, theoreticalMoments(model, n)[theoryKeys[i]].variance]);
+      const simulated = sizes.map((n, s) => [
+        n,
+        variance(totalsBySize[s].map((total) => total / scales[i](n))),
+      ]);
+      series.push({ name, color: colors[i], pts: theory, line: true, dash: [6, 4] });
+      series.push({ color: colors[i], pts: simulated, dots: true });
+      allValues.push(...theory.map((point) => point[1]), ...simulated.map((point) => point[1]));
+    });
+
+    const powerBelow = (value) => Math.pow(10, Math.floor(Math.log10(value)));
+    const powerAbove = (value) => Math.pow(10, Math.ceil(Math.log10(value)));
+    drawLinePlot(element("d-var"), {
+      logX: true,
+      logY: true,
+      x0: powerBelow(sizes[0]),
+      x1: powerAbove(sizes[sizes.length - 1]),
+      y0: powerBelow(Math.min(...allValues)),
+      y1: powerAbove(Math.max(...allValues)),
+      xlabel: "n",
+      series,
+    });
+  }
+
+  function showDistributions(params) {
+    const model = createModel(params.model, params.p);
+    const sizes = histogramSizes(params.n);
+    const totalsBySize = totalScoresAt(model, sizes, params.m, params.seed + modelOffset(params));
+    state.distribution = showDistributionStats(
+      model,
+      sizes[sizes.length - 1],
+      totalsBySize[sizes.length - 1],
+    );
+
+    ["total", "avg", "norm"].forEach((id, scalingIndex) => {
+      const box = element("dg-" + id);
+      box.innerHTML = "";
+      sizes.forEach((size, s) => {
+        const canvas = document.createElement("canvas");
+        box.appendChild(canvas);
+        const axis = histogramAxis(scalingIndex, size, params.n, model, params.model);
+        drawLatticeHistogram(canvas, totalsBySize[s], size, model, scalingIndex, axis);
       });
     });
-    var sim = [[], [], []], th = [[], [], []];
-    cps.forEach(function (c, i) {
-      var a = tot[i], T = theory(M, c);
-      sim[0].push([c, variance(a)]); sim[1].push([c, variance(a.map(function (v) { return v / c; }))]); sim[2].push([c, variance(a.map(function (v) { return v / Math.sqrt(c); }))]);
-      th[0].push([c, T.total.var]); th[1].push([c, T.average.var]); th[2].push([c, T.normalized.var]);
-    });
-    var cols = [css("--accent"), AMBER, css("--ink")], names = ["Var(Sₙ)", "Var(Sₙ/n)", "Var(Sₙ/√n)"], all = [];
-    sim.concat(th).forEach(function (a) { a.forEach(function (q) { all.push(q[1]); }); });
-    var series = [];
-    names.forEach(function (nm, i) { series.push({ name: nm, color: cols[i], pts: th[i], line: true, dash: [6, 4] }); series.push({ name: "", color: cols[i], pts: sim[i], dots: true }); });
-    series = series.filter(function (s2) { return s2.name || true; });
-    var lo = Math.pow(10, Math.floor(Math.log10(Math.min.apply(null, all)))), hi = Math.pow(10, Math.ceil(Math.log10(Math.max.apply(null, all))));
-    var legendSeries = names.map(function (nm, i) { return { name: nm, color: cols[i], pts: [], line: false }; });
-    logPlot($("d-var"), { x0: Math.pow(10, Math.floor(Math.log10(cps[0]))), x1: Math.pow(10, Math.ceil(Math.log10(cps[cps.length - 1]))), y0: lo, y1: hi, xlabel: "n", series: series.filter(function (s2) { return s2.pts.length; }).concat(legendSeries) });
+    showVarianceChart(model, sizes, totalsBySize);
   }
 
   // ---------- law of large numbers ----------
-  var LC = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000], lln = null;
-  function llnRender() {
-    var eps = Math.max(0.005, Math.min(0.5, Number($("eps").value) || 0.05)), cps = lln.cps;
-    var rows = cps.map(function (n, i) { return llnRow(lln.M, n, lln.tot[i], eps); });
-    var lr = rows[rows.length - 1]; S.lln = { n: lr.n, emp: lr.empirical, cheb: lr.chebyshev, eps: eps };
-    if (S.ready) renderSummary();
-    logPlot($("l-chart"), { x0: 10, x1: 10000, y0: 1e-4, y1: 1, xlabel: "n",
+
+  let llnData = null;
+
+  function showLawOfLargeNumbers() {
+    const epsilon = Math.max(0.005, Math.min(0.5, Number(element("eps").value) || 0.05));
+    const rows = llnData.sizes.map((n, i) =>
+      deviationProbability(llnData.model, n, llnData.totals[i], epsilon),
+    );
+    const last = rows[rows.length - 1];
+    state.lln = { n: last.n, empirical: last.empirical, chebyshev: last.chebyshev, epsilon };
+    if (state.ready) {
+      showSummary();
+    }
+    drawLinePlot(element("l-chart"), {
+      logX: true,
+      logY: true,
+      x0: 10,
+      x1: 10000,
+      y0: 1e-4,
+      y1: 1,
+      xlabel: "n",
       series: [
-        { name: "Chebyshev bound", color: AMBER, pts: rows.map(function (r) { return [r.n, r.chebyshev]; }), line: true, dash: [6, 4] },
-        { name: "Hoeffding bound", color: css("--ink"), pts: rows.map(function (r) { return [r.n, r.hoeffding]; }), line: true, dash: [2, 3] },
-        { name: "Simulated", color: css("--accent"), pts: rows.map(function (r) { return [r.n, r.empirical]; }), line: true, dots: true }] });
-  }
-  function llnRun(P) {
-    var M = makeModel(P.model, P.p), cps = LC.filter(function (v) { return v <= P.n; });
-    lln = { M: M, cps: cps, tot: sampleTotals(M, cps, P.m, P.seed + 1 + (P.model === "bernoulli" ? 0 : 100)) };
-    llnRender();
+        {
+          name: "Chebyshev bound",
+          color: AMBER,
+          pts: rows.map((row) => [row.n, row.chebyshev]),
+          line: true,
+          dash: [6, 4],
+        },
+        {
+          name: "Hoeffding bound",
+          color: cssColor("--ink"),
+          pts: rows.map((row) => [row.n, row.hoeffding]),
+          line: true,
+          dash: [2, 3],
+        },
+        {
+          name: "Simulated",
+          color: cssColor("--accent"),
+          pts: rows.map((row) => [row.n, row.empirical]),
+          line: true,
+          dots: true,
+        },
+      ],
+    });
   }
 
-  // ---------- central limit theorem (selected model, standardized) ----------
-  function ecdfPlot(cv, curves) {
-    var ctx = setup(cv), W = cv.width, H = cv.height, L = 44, R = 12, T = 12, B = 34, x0 = -3.5, x1 = 3.5;
-    var X = function (x) { return L + (x - x0) / (x1 - x0) * (W - L - R); }, Y = function (y) { return T + (1 - y) * (H - T - B); };
-    ctx.strokeStyle = css("--line"); ctx.fillStyle = css("--muted"); ctx.lineWidth = 1; ctx.textAlign = "right";
-    [0, 0.25, 0.5, 0.75, 1].forEach(function (y) { ctx.beginPath(); ctx.moveTo(L, Y(y)); ctx.lineTo(W - R, Y(y)); ctx.stroke(); ctx.fillText(y, L - 5, Y(y) + 4); });
-    ctx.textAlign = "center"; for (var x = -3; x <= 3; x++) { ctx.beginPath(); ctx.moveTo(X(x), T); ctx.lineTo(X(x), H - B); ctx.stroke(); ctx.fillText(x, X(x), H - B + 14); }
-    ctx.fillText("standardized score", (L + W - R) / 2, H - 6);
-    curves.forEach(function (c) {
-      ctx.strokeStyle = c.color; ctx.lineWidth = 2; ctx.setLineDash(c.dash || []); ctx.beginPath();
-      for (var px = 0; px <= 400; px++) {
-        var xx = x0 + (x1 - x0) * px / 400, F;
-        if (c.z) { var lo = 0, hi = c.z.length; while (lo < hi) { var mid = (lo + hi) >> 1; if (c.z[mid] <= xx) lo = mid + 1; else hi = mid; } F = lo / c.z.length; } else F = Phi(xx);
-        px ? ctx.lineTo(X(xx), Y(F)) : ctx.moveTo(X(xx), Y(F));
-      }
-      ctx.stroke(); ctx.setLineDash([]);
-    });
-    ctx.textAlign = "left"; curves.forEach(function (c, i) { var yy = H - B - 14 - (curves.length - 1 - i) * 16; ctx.fillStyle = c.color; ctx.fillRect(W - R - 90, yy - 4, 14, 4); ctx.fillStyle = css("--ink"); ctx.fillText(c.name, W - R - 70, yy); });
+  function runLawOfLargeNumbers(params) {
+    const model = createModel(params.model, params.p);
+    const sizes = LLN_SIZES.filter((size) => size <= params.n);
+    const totals = totalScoresAt(model, sizes, params.m, params.seed + 1 + modelOffset(params));
+    llnData = { model, sizes, totals };
+    showLawOfLargeNumbers();
   }
-  function cltRun(P) {
-    var cc = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000], M = makeModel(P.model, P.p), mm = 10 * P.m, sg = Math.sqrt(M.sigma2);
-    var tot = sampleTotals(M, cc, mm, P.seed + 3);
-    var z = cc.map(function (n, i) { return Float64Array.from(tot[i], function (v) { return (v - n * M.mu) / (sg * Math.sqrt(n)); }).sort(); });
-    var D = z.map(function (zz) { return ksNormal(zz); }), noise = 1.36 / Math.sqrt(mm), floor = function (n) { return 0.1995 * M.h / (sg * Math.sqrt(n)); };
-    var shades = ["#f59e0b", "#ef4444", "#3b82f6", "#8b5cf6", "#15803d"], pick = [0, 2, 4, 6, 9];
-    ecdfPlot($("c-cdf"), [{ name: "Φ", color: css("--ink"), dash: [5, 4] }].concat(pick.map(function (i, k) { return { name: "n = " + cc[i], color: shades[k], z: z[i] }; })));
-    logPlot($("c-chart"), { x0: 1, x1: 1000, y0: 0.005, y1: 1, xlabel: "n",
+
+  // ---------- central limit theorem ----------
+
+  // Share of sorted values that are <= x (binary search).
+  function empiricalCdf(sorted, x) {
+    let low = 0;
+    let high = sorted.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (sorted[middle] <= x) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return low / sorted.length;
+  }
+
+  // Empirical distribution functions (curves with sorted values) and the normal one (curve without values).
+  function drawCdfChart(canvas, curves) {
+    const context = clearCanvas(canvas);
+    const width = canvas.width;
+    const height = canvas.height;
+    const left = 44;
+    const right = 12;
+    const top = 12;
+    const bottom = 34;
+    const x0 = -3.5;
+    const x1 = 3.5;
+    const toX = (x) => left + ((x - x0) / (x1 - x0)) * (width - left - right);
+    const toY = (y) => top + (1 - y) * (height - top - bottom);
+
+    context.strokeStyle = cssColor("--line");
+    context.fillStyle = cssColor("--muted");
+    context.lineWidth = 1;
+    context.textAlign = "right";
+    for (const y of [0, 0.25, 0.5, 0.75, 1]) {
+      drawLine(context, left, toY(y), width - right, toY(y));
+      context.fillText(y, left - 5, toY(y) + 4);
+    }
+    context.textAlign = "center";
+    for (let x = -3; x <= 3; x++) {
+      drawLine(context, toX(x), top, toX(x), height - bottom);
+      context.fillText(x, toX(x), height - bottom + 14);
+    }
+    context.fillText("standardized score", (left + width - right) / 2, height - 6);
+
+    for (const curve of curves) {
+      context.strokeStyle = curve.color;
+      context.lineWidth = 2;
+      context.setLineDash(curve.dash || []);
+      context.beginPath();
+      for (let i = 0; i <= 400; i++) {
+        const x = x0 + ((x1 - x0) * i) / 400;
+        const y = curve.values ? empiricalCdf(curve.values, x) : normalCdf(x);
+        if (i === 0) {
+          context.moveTo(toX(x), toY(y));
+        } else {
+          context.lineTo(toX(x), toY(y));
+        }
+      }
+      context.stroke();
+      context.setLineDash([]);
+    }
+
+    context.textAlign = "left";
+    curves.forEach((curve, i) => {
+      const y = height - bottom - 14 - (curves.length - 1 - i) * 16;
+      context.fillStyle = curve.color;
+      context.fillRect(width - right - 90, y - 4, 14, 4);
+      context.fillStyle = cssColor("--ink");
+      context.fillText(curve.name, width - right - 70, y);
+    });
+  }
+
+  function drawLine(context, xFrom, yFrom, xTo, yTo) {
+    context.beginPath();
+    context.moveTo(xFrom, yFrom);
+    context.lineTo(xTo, yTo);
+    context.stroke();
+  }
+
+  function runCentralLimitTheorem(params) {
+    const model = createModel(params.model, params.p);
+    const attackers = 10 * params.m;
+    const sigma = Math.sqrt(model.variance);
+    const totalsBySize = totalScoresAt(model, CLT_SIZES, attackers, params.seed + 3);
+    const standardized = CLT_SIZES.map((n, i) =>
+      Float64Array.from(
+        totalsBySize[i],
+        (total) => (total - n * model.mean) / (sigma * Math.sqrt(n)),
+      ).sort(),
+    );
+    const distances = standardized.map(kolmogorovDistance);
+    const noise = 1.36 / Math.sqrt(attackers);
+    const latticeFloor = (n) => (0.1995 * model.latticeStep) / (sigma * Math.sqrt(n));
+    const shownSizes = [0, 2, 4, 6, 9];
+
+    drawCdfChart(element("c-cdf"), [
+      { name: "Φ", color: cssColor("--ink"), dash: [5, 4] },
+      ...shownSizes.map((index, k) => ({
+        name: "n = " + CLT_SIZES[index],
+        color: ECDF_COLORS[k],
+        values: standardized[index],
+      })),
+    ]);
+    drawLinePlot(element("c-chart"), {
+      logX: true,
+      logY: true,
+      x0: 1,
+      x1: 1000,
+      y0: 0.005,
+      y1: 1,
+      xlabel: "n",
       series: [
-        { name: "Sampling noise (5% critical value)", color: css("--ink"), pts: [[1, noise], [1000, noise]], line: true, dash: [2, 3] },
-        { name: "Lattice floor", color: AMBER, pts: cc.map(function (n) { return [n, floor(n)]; }), line: true, dash: [6, 4] },
-        { name: "Simulated Dₙ", color: css("--accent"), pts: cc.map(function (n, i) { return [n, D[i]]; }), line: true, dots: true }] });
-    $("c-info").textContent = mm + " attackers for each n; critical value 1.36/√" + mm + " = " + noise.toFixed(4) + ".";
-    S.clt = { n: cc[cc.length - 1], D: D[D.length - 1] };
+        {
+          name: "Sampling noise (5% critical value)",
+          color: cssColor("--ink"),
+          pts: [
+            [1, noise],
+            [1000, noise],
+          ],
+          line: true,
+          dash: [2, 3],
+        },
+        {
+          name: "Lattice floor",
+          color: AMBER,
+          pts: CLT_SIZES.map((n) => [n, latticeFloor(n)]),
+          line: true,
+          dash: [6, 4],
+        },
+        {
+          name: "Simulated Dₙ",
+          color: cssColor("--accent"),
+          pts: CLT_SIZES.map((n, i) => [n, distances[i]]),
+          line: true,
+          dots: true,
+        },
+      ],
+    });
+    element("c-info").textContent =
+      `${attackers} attackers for each n; critical value 1.36/√${attackers} = ${noise.toFixed(4)}.`;
+    state.clt = { n: CLT_SIZES[CLT_SIZES.length - 1], distance: distances[distances.length - 1] };
   }
 
   // ---------- systems and attackers ----------
-  function aggRun(P) {
-    var M = makeModel(P.model, P.p), GN = [10, 100, 1000], GM = [1, 10, 100], sim = [], th = [], mi = P.model === "bernoulli" ? 0 : 1;
-    GN.forEach(function (n, ni) { GM.forEach(function (m, k) { var a = aggregate(M, n, m, 200, P.seed + 40 + 10 * ni + k + 100 * mi); sim.push([n * m, a.sd]); }); });
-    var sg = Math.sqrt(M.sigma2);
-    logPlot($("g-chart"), { x0: 10, x1: 100000, y0: 0.001, y1: 1, xlabel: "m · n",
-      series: [{ name: "Theory σ/√(mn)", color: css("--ink"), pts: [[10, sg / Math.sqrt(10)], [100000, sg / Math.sqrt(100000)]], line: true, dash: [6, 4] },
-               { name: "Simulated", color: css("--accent"), pts: sim, dots: true }] });
+
+  function runAggregate(params) {
+    const model = createModel(params.model, params.p);
+    const modelIndex = params.model === "bernoulli" ? 0 : 1;
+    const points = [];
+    [10, 100, 1000].forEach((n, nIndex) => {
+      [1, 10, 100].forEach((attackers, mIndex) => {
+        const seed = params.seed + 40 + 10 * nIndex + mIndex + 100 * modelIndex;
+        points.push([n * attackers, aggregateSpread(model, n, attackers, 200, seed).spread]);
+      });
+    });
+    const sigma = Math.sqrt(model.variance);
+    drawLinePlot(element("g-chart"), {
+      logX: true,
+      logY: true,
+      x0: 10,
+      x1: 100000,
+      y0: 0.001,
+      y1: 1,
+      xlabel: "m · n",
+      series: [
+        {
+          name: "Theory σ/√(mn)",
+          color: cssColor("--ink"),
+          pts: [
+            [10, sigma / Math.sqrt(10)],
+            [100000, sigma / Math.sqrt(100000)],
+          ],
+          line: true,
+          dash: [6, 4],
+        },
+        { name: "Simulated", color: cssColor("--accent"), pts: points, dots: true },
+      ],
+    });
   }
 
-  function renderSummary() {
-    var P = S.P, M = makeModel(P.model, P.p), d = S.dist, l = S.lln, c = S.clt, bern = P.model === "bernoulli";
-    var li = function (t, x) { return "<li><strong>" + t + ".</strong> " + x + "</li>"; };
-    $("runSummary").innerHTML =
-      li("Setup", (bern ? "Bernoulli with p = " + P.p : "Rademacher") + ", n = " + P.n + " systems, m = " + P.m + " attackers, seed " + P.seed + ".") +
-      li("Total score", "At n = " + d.n + " the sample variance of Sₙ is " + fx(d.vS) + " against the theoretical " + fx(d.vST) + ".") +
-      li("Average score", "The sample mean of Sₙ/n is " + fx(d.mA) + " (expected " + fx(M.mu) + ") and its variance " + fx(d.vA) + " (theory " + fx(d.vAT) + ").") +
-      li("Normalized score", "The sample variance of Sₙ/√n is " + fx(d.vN) + " (theory " + fx(d.vNT) + ")" + (bern ? ", while its mean " + fx(d.mN) + " follows p√n = " + fx(d.mNT) + ": it drifts." : ", and its mean " + fx(d.mN) + " is close to 0.")) +
-      li("Law of large numbers", "At n = " + l.n + " the share of attackers with |Sₙ/n − μ| &gt; " + l.eps + " is " + l.emp.toFixed(3) + " (Chebyshev bound " + l.cheb.toFixed(3) + ").") +
-      li("Central limit theorem", "The Kolmogorov distance between the " + (bern ? "standardized Bernoulli score" : "normalized Rademacher score") + " and N(0, 1) at n = " + c.n + " is " + c.D.toFixed(4) + ".");
+  // ---------- summary of the current run ----------
+
+  function showSummary() {
+    const { params, distribution: d, lln, clt } = state;
+    const model = createModel(params.model, params.p);
+    const bernoulli = params.model === "bernoulli";
+    const item = (title, text) => `<li><strong>${title}.</strong> ${text}</li>`;
+    const normalizedEnd = bernoulli
+      ? `, while its mean ${format(d.normalizedMean)} follows p√n = ${format(d.moments.normalized.mean)}: it drifts.`
+      : `, and its mean ${format(d.normalizedMean)} is close to 0.`;
+
+    element("runSummary").innerHTML = [
+      item(
+        "Setup",
+        `${bernoulli ? "Bernoulli with p = " + params.p : "Rademacher"}, n = ${params.n} systems, ` +
+          `m = ${params.m} attackers, seed ${params.seed}.`,
+      ),
+      item(
+        "Total score",
+        `At n = ${d.n} the sample variance of Sₙ is ${format(d.totalVariance)} ` +
+          `against the theoretical ${format(d.moments.total.variance)}.`,
+      ),
+      item(
+        "Average score",
+        `The sample mean of Sₙ/n is ${format(d.averageMean)} (expected ${format(model.mean)}) ` +
+          `and its variance ${format(d.averageVariance)} (theory ${format(d.moments.average.variance)}).`,
+      ),
+      item(
+        "Normalized score",
+        `The sample variance of Sₙ/√n is ${format(d.normalizedVariance)} ` +
+          `(theory ${format(d.moments.normalized.variance)})${normalizedEnd}`,
+      ),
+      item(
+        "Law of large numbers",
+        `At n = ${lln.n} the share of attackers with |Sₙ/n − μ| &gt; ${lln.epsilon} ` +
+          `is ${lln.empirical.toFixed(3)} (Chebyshev bound ${lln.chebyshev.toFixed(3)}).`,
+      ),
+      item(
+        "Central limit theorem",
+        `The Kolmogorov distance between the ` +
+          `${bernoulli ? "standardized Bernoulli score" : "normalized Rademacher score"} and N(0, 1) ` +
+          `at n = ${clt.n} is ${clt.distance.toFixed(4)}.`,
+      ),
+    ].join("");
   }
+
+  // ---------- run everything ----------
+
   function runAll() {
-    var P = params(), t1 = performance.now(); S.P = P; S.ready = false;
-    document.querySelector("main").setAttribute("data-model", P.model);
-    $("runStatus").textContent = "Simulating…";
-    setTimeout(function () { buildPaths(P); distributions(P);
-      setTimeout(function () { llnRun(P);
-        setTimeout(function () { cltRun(P); setTimeout(function () { aggRun(P); S.ready = true; renderSummary(); $("runStatus").textContent = "Done in " + ((performance.now() - t1) / 1000).toFixed(1) + " s."; }, 15); }, 15); }, 15); }, 15);
+    const params = readParameters();
+    const startTime = performance.now();
+    state.params = params;
+    state.ready = false;
+    document.querySelector("main").setAttribute("data-model", params.model);
+    element("runStatus").textContent = "Simulating…";
+
+    // the pauses let the browser repaint between the heavier steps
+    const steps = [
+      () => {
+        showTrajectories(params);
+        showDistributions(params);
+      },
+      () => runLawOfLargeNumbers(params),
+      () => runCentralLimitTheorem(params),
+      () => {
+        runAggregate(params);
+        state.ready = true;
+        showSummary();
+        const seconds = (performance.now() - startTime) / 1000;
+        element("runStatus").textContent = `Done in ${seconds.toFixed(1)} s.`;
+      },
+    ];
+    const runStep = (i) => {
+      if (i < steps.length) {
+        setTimeout(() => {
+          steps[i]();
+          runStep(i + 1);
+        }, 15);
+      }
+    };
+    runStep(0);
   }
-  $("runBtn").addEventListener("click", runAll);
-  $("replay").addEventListener("click", replay);
-  ["modelSel", "n", "m", "p", "seed"].forEach(function (id) { $(id).addEventListener("change", runAll); });
-  $("eps").addEventListener("input", function () { if (lln) llnRender(); });
-  if (window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener("change", runAll);
+
+  element("runBtn").addEventListener("click", runAll);
+  element("replay").addEventListener("click", replayAnimation);
+  for (const id of ["modelSel", "n", "m", "p", "seed"]) {
+    element(id).addEventListener("change", runAll);
+  }
+  element("eps").addEventListener("input", () => {
+    if (llnData) {
+      showLawOfLargeNumbers();
+    }
+  });
+  if (window.matchMedia) {
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", runAll);
+  }
+
   runAll();
 })();

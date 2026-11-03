@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homework 5: Welford's recurrences and sampling estimators</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><a href="../index.html">Home</a><span>/</span><span class="brand">Homework 5: Welford's recurrences and sampling estimators</span></header>
+<main>
+  <div class="hero small">
+    <p class="eyebrow">Homework 5 · Estimation</p>
+    <h1>Welford's recurrences and sampling estimators</h1>
+    <p class="lead">A single-pass, numerically stable way to compute mean and variance, used to check how sample means and sample variances estimate μ and σ².</p>
+  </div>
+  <nav class="toc" id="toc" aria-label="Contents"></nav>
+
+  <section>
+  <h2 id="summary">Summary</h2>
+  <p>Exercise 1 derives Welford's recurrences for the sum of squares and the variance, in the same way as Knuth's recurrence for the mean, and implements them in three lines of code. Exercise 2 gives each of m hackers a trajectory of n scores between 0 and 10, computes each hacker's sampling mean and sampling variance with Welford's method, and compares their averages with the theoretical μ and σ².</p>
+  <p>The averages agree with μ and σ², because the sample mean and the sample variance with denominator n − 1 are unbiased estimators. Dividing by n instead underestimates σ² by the factor (n − 1)/n. As n grows, both estimators vary less from hacker to hacker, with a standard deviation that falls like 1/√n: this is what makes them useful for inference.</p>
+  <h3>Results of the current run</h3>
+  <ul class="runlist" id="runSummary"><li>Computing…</li></ul>
+  </section>
+
+  <section>
+  <h2 id="ex1">Ex. 1: Welford's recurrence formulas</h2>
+  <p>For data x<sub>1</sub>, x<sub>2</sub>, … let M<sub>k</sub> be the mean of the first k values and SS<sub>k</sub> = Σ<sub>i≤k</sub> (x<sub>i</sub> − M<sub>k</sub>)² their sum of squared deviations. The goal is to update both when a new value arrives, without storing the data and without summing large squares.</p>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Step 1</span><h4>Knuth's recurrence for the mean</h4>
+      <p>k·M<sub>k</sub> = (k − 1)·M<sub>k−1</sub> + x<sub>k</sub>, so dividing by k:</p>
+      <p class="formula">M<sub>k</sub> = M<sub>k−1</sub> + (x<sub>k</sub> − M<sub>k−1</sub>) / k</p>
+      <p>Write δ = x<sub>k</sub> − M<sub>k−1</sub>. Then M<sub>k</sub> − M<sub>k−1</sub> = δ/k and x<sub>k</sub> − M<sub>k</sub> = δ(k − 1)/k.</p></div>
+    <div class="kcard"><span class="tag">Step 2</span><h4>Welford's recurrence for SS</h4>
+      <p>Split SS<sub>k</sub> into the first k − 1 terms and the last one, and write x<sub>i</sub> − M<sub>k</sub> = (x<sub>i</sub> − M<sub>k−1</sub>) − δ/k:</p>
+      <p>SS<sub>k</sub> = SS<sub>k−1</sub> − (2δ/k)·Σ<sub>i&lt;k</sub>(x<sub>i</sub> − M<sub>k−1</sub>) + (k − 1)δ²/k² + δ²(k − 1)²/k².</p>
+      <p>The middle sum is 0 (deviations from a mean add up to zero), and the last two terms add up to δ²(k − 1)/k = δ·(x<sub>k</sub> − M<sub>k</sub>):</p>
+      <p class="formula">SS<sub>k</sub> = SS<sub>k−1</sub> + (x<sub>k</sub> − M<sub>k−1</sub>)(x<sub>k</sub> − M<sub>k</sub>)</p></div>
+    <div class="kcard"><span class="tag">Step 3</span><h4>Recurrence for the variance</h4>
+      <p>The sample variance is s²<sub>k</sub> = SS<sub>k</sub>/(k − 1). Using SS<sub>k−1</sub> = (k − 2)·s²<sub>k−1</sub>, for k ≥ 2:</p>
+      <p class="formula">s²<sub>k</sub> = (k − 2)/(k − 1) · s²<sub>k−1</sub> + δ²/k</p>
+      <p>The start is M<sub>1</sub> = x<sub>1</sub>, SS<sub>1</sub> = 0. The biased variance SS<sub>k</sub>/k follows in the same way.</p></div>
+    <div class="kcard"><span class="tag">Code</span><h4>The core logic in three lines</h4>
+      <pre>count += 1;
+const delta = x - mean;           // δ with the old mean
+mean += delta / count;            // Knuth
+sumOfSquares += delta * (x - mean); // Welford</pre>
+      <p>The last three lines are the core; then s² = sumOfSquares/(count − 1). The update needs O(1) memory and one pass over the data, so it works on a stream of scores.</p></div>
+    <div class="kcard"><span class="tag">Why not Σx² − n·x̄²</span><h4>Numerical stability</h4>
+      <p>The textbook one-pass formula subtracts two large, nearly equal numbers. In double precision the difference loses its significant digits (catastrophic cancellation). Welford only accumulates deviations from the current mean, which stay small. Try the demo with the offset: for 4, 7, 13, 16 plus 10⁹ the textbook formula gives −170.67 (a negative variance), Welford gives the exact 30.</p></div>
+  </div>
+  <div class="panel">
+    <label>Data <input id="w-data" type="text" value="4, 7, 13, 16" style="width:18rem;max-width:100%"></label>
+    <label><input id="w-offset" type="checkbox" style="width:auto"> add 10⁹ to every value</label>
+    <ul class="chips" id="w-steps"></ul>
+    <p class="result" id="w-compare"></p>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="ex2">Ex. 2: the experiment</h2>
+  <p>Each of m hackers attempts n systems and receives one score in [0, 10] per system, drawn independently from a fixed distribution with mean μ and variance σ². For each hacker, Welford's recurrences give the sampling mean x̄ and the sampling variance s² of the n scores, in a single pass.</p>
+  <div class="panel">
+    <div class="controls">
+      <label>Score distribution <select id="dist"><option value="binomial">Binomial(10, p)</option><option value="uniform">Discrete uniform 0–10</option><option value="beta">10 · Beta(2, 5)</option></select></label>
+      <label>Success probability (p) <input id="p" type="number" value="0.3" min="0.05" max="0.95" step="0.05"></label>
+      <label>Number of systems (n) <input id="n" type="number" value="100" min="2" max="5000"></label>
+      <label>Number of hackers (m) <input id="m" type="number" value="2000" min="10" max="5000" step="100"></label>
+      <label>Random seed <input id="seed" type="number" value="2026"></label>
+      <button id="runBtn" type="button">Run</button>
+      <button id="replay" type="button">Replay animation</button>
+      <span id="runStatus" class="legend">Ready to simulate.</span>
+    </div>
+    <p class="legend">The default distribution is Binomial(10, 0.3): each system has 10 independent sub-steps, each passed with probability 0.3, and the score is the number of sub-steps passed. The numbers quoted in the text refer to the default values (n = 100, m = 2000, seed 2026).</p>
+  </div>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Score distribution</span><h4>Probabilities of the scores 0 … 10</h4><div id="dist-chart"></div><p id="dist-info" class="stat"></p></div>
+    <div class="kcard"><span class="tag">What is compared</span>
+      <p>For hacker j: x̄<sub>j</sub> = M<sub>n</sub> and s²<sub>j</sub> = SS<sub>n</sub>/(n − 1) from Welford.</p>
+      <p>Across the m hackers: the average of the x̄<sub>j</sub> against μ, and the average of the s²<sub>j</sub> against σ².</p>
+      <p>Theory: E[x̄] = μ and Var(x̄) = σ²/n; E[s²] = σ² and Var(s²) = (μ₄ − σ⁴(n − 3)/(n − 1))/n, where μ₄ is the fourth central moment.</p></div>
+  </div>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Running mean</span><h4>M<sub>k</sub> for 20 hackers, k = 1 … n</h4><canvas id="run-mean" width="560" height="280" aria-label="Running sample mean of 20 hackers"></canvas>
+      <p>Each line is one hacker's Welford mean after k systems. It settles around μ (dashed) inside the band μ ± 2σ/√k.</p></div>
+    <div class="kcard"><span class="tag">Running variance</span><h4>s²<sub>k</sub> for 20 hackers, k = 2 … n</h4><canvas id="run-var" width="560" height="280" aria-label="Running sample variance of 20 hackers"></canvas>
+      <p>The running variance is very unstable for small k and then settles around σ² (dashed), inside a band that also shrinks like 1/√k.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="averages">Averages across the hackers</h2>
+  <p>Distribution of the m sampling means and of the m sampling variances at the chosen n, with the normal curve of the theoretical mean and variance (black), the theoretical value (dashed) and the average across hackers (amber).</p>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Sampling means</span><h4>x̄ of each hacker</h4><canvas id="h-mean" width="560" height="260" aria-label="Histogram of sampling means"></canvas><p class="stat" id="st-mean"></p></div>
+    <div class="kcard"><span class="tag">Sampling variances</span><h4>s² of each hacker</h4><canvas id="h-var" width="560" height="260" aria-label="Histogram of sampling variances"></canvas><p class="stat" id="st-var"></p></div>
+  </div>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Conclusion</span><p>In the default run the average of the sampling means is 3.0001 against μ = 3, and the average of the sampling variances is 2.089 against σ² = 2.1. The differences are within the precision of the check itself: an average over m = 2000 hackers has a standard error of about 0.003 for the means and 0.006 for the variances.</p></div>
+    <div class="kcard"><span class="tag">Unbiasedness</span><p>x̄ and s² are unbiased: on average they hit μ and σ². The variance with denominator n is biased: its average is 2.068, close to σ²(n − 1)/n = 2.079. The n − 1 (Bessel's correction) compensates for measuring deviations from x̄ instead of from the unknown μ.</p></div>
+    <div class="kcard"><span class="tag">Why it matters for inference</span><p>In practice there is only one sample. Unbiasedness guarantees that the estimate has no systematic error, and the spread σ/√n (estimated by s/√n, the standard error) gives its precision. Together with the approximately normal shape of x̄ (central limit theorem) this is the basis of confidence intervals and tests, such as x̄ ± 1.96·s/√n for μ.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="more-systems">Effect of the number of systems</h2>
+  <p>The experiment is repeated for n = 2, 5, 10, 20, 50, 100, 200, 500 and 1000 systems per hacker, with the same number of hackers.</p>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Bias</span><h4>Average estimate divided by its target</h4><canvas id="n-bias" width="560" height="300" aria-label="Average estimates divided by the theoretical values as a function of n"></canvas>
+      <p>The sampling mean and s² stay at 1 for every n (within 0.3% for the means and about 1% for the variances from n = 10; at n = 2 the variance check itself is noisy). The biased variance follows (n − 1)/n: 0.52 at n = 2, 0.90 at n = 10, 0.98 at n = 50.</p></div>
+    <div class="kcard"><span class="tag">Variability</span><h4>Standard deviation across hackers, both axes logarithmic</h4><canvas id="n-sd" width="560" height="300" aria-label="Standard deviation of the estimators as a function of n"></canvas>
+      <p>Both lines have slope −1/2. The sampling means go from 1.01 at n = 2 to 0.046 at n = 1000, matching σ/√n. The sampling variances go from 2.99 to 0.092, matching √Var(s²), which behaves like √((μ₄ − σ⁴)/n) for large n.</p></div>
+  </div>
+  <p>Increasing the number of systems per hacker does not change where the estimators are centered, but it makes them more concentrated: 100 times more systems give a spread 10 times smaller. For small n the sampling variance is also strongly skewed to the right (it can be much larger than σ², but not below 0), and its histogram becomes symmetric and close to normal only for larger n.</p>
+  </section>
+
+  <section>
+  <h2 id="conclusions">Conclusions</h2>
+  <p>Welford's recurrences compute the mean and the variance in a single pass with constant memory, and they avoid the cancellation that makes the textbook formula fail on large values. Applied to m hackers and n systems, they show that the sampling mean and the sampling variance (with n − 1) are unbiased estimators of μ and σ², while dividing by n underestimates σ². Their variability across hackers falls like 1/√n, so a larger number of systems gives more precise estimates. This is why a single sample can be used to estimate a population parameter and to quantify the uncertainty of that estimate.</p>
+  </section>
+</main>
+<footer>
+  <p>Matteo Miano · Student ID 2117312 · Sapienza University of Rome · Master's Degree in Cybersecurity · Statistics 2026/27</p>
+  <p>Toy examples for educational purposes. Never use a real seed phrase or private key.</p>
+</footer>
+<script src="../site.js"></script>
+<script src="../js/random.js"></script>
+<script src="../js/stats.js"></script>
+<script src="../js/format.js"></script>
+<script src="../js/charts.js"></script>
+<script src="welford.js"></script>
+<script src="scores.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

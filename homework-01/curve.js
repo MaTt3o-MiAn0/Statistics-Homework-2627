@@ -1,72 +1,120 @@
-// Toy elliptic curve: y^2 = x^3 + 7 (mod 17).  Shared by the Task 1, 2 and 3 pages.
+// Toy elliptic curve y² = x³ + 7 (mod 17), shared by the three tasks.
 
-const P = 17;                 // field modulus
-const A = 0, B = 7;           // curve y^2 = x^3 + A*x + B
-const G = { x: 1, y: 5 };     // default base point
-const INF = null;             // point at infinity (neutral element)
+const P = 17; // field modulus
+const A = 0; // curve y² = x³ + A·x + B
+const B = 7;
+const G = { x: 1, y: 5 }; // default base point
+const INF = null; // point at infinity (neutral element)
 
-// Modulo that is always in [0, m-1], also for negative numbers.
+// Modulo that is always in [0, m - 1], also for negative numbers.
 function mod(n, m = P) {
   return ((n % m) + m) % m;
 }
 
-// Modular inverse of a mod P: the x in [1, P-1] with a*x = 1 (mod P).
-// Brute force is fine because P is tiny. Returns null if no inverse exists (a = 0).
-function modInv(a) {
-  a = mod(a);
+// Modular inverse: the x in [1, P - 1] with a·x = 1 (mod P). Brute force is enough for P = 17.
+function modularInverse(a) {
+  const value = mod(a);
   for (let x = 1; x < P; x++) {
-    if (mod(a * x) === 1) return x;
+    if (mod(value * x) === 1) {
+      return x;
+    }
   }
   return null;
 }
 
-// True if the point satisfies y^2 = x^3 + A*x + B (mod P). INF counts as on the curve.
-function isOnCurve(pt) {
-  if (pt === INF) return true;
-  return mod(pt.y * pt.y) === mod(pt.x * pt.x * pt.x + A * pt.x + B);
+function isOnCurve(point) {
+  if (point === INF) {
+    return true;
+  }
+  return mod(point.y * point.y) === mod(point.x * point.x * point.x + A * point.x + B);
 }
 
-// P1 + P2 on the curve. INF is the neutral element.
-function pointAdd(p1, p2) {
-  if (p1 === INF) return p2;
-  if (p2 === INF) return p1;
-
-  // P + (-P) = INF (same x, opposite y; also covers doubling a point with y = 0)
-  if (p1.x === p2.x && mod(p1.y + p2.y) === 0) return INF;
-
-  let lambda;
-  if (p1.x === p2.x && p1.y === p2.y) {
-    // doubling: lambda = (3x^2 + A) / (2y)
-    lambda = mod((3 * p1.x * p1.x + A) * modInv(2 * p1.y));
-  } else {
-    // addition: lambda = (y2 - y1) / (x2 - x1)
-    lambda = mod((p2.y - p1.y) * modInv(p2.x - p1.x));
+// Sum of two points: tangent slope for doubling, chord slope otherwise.
+function addPoints(first, second) {
+  if (first === INF) {
+    return second;
+  }
+  if (second === INF) {
+    return first;
+  }
+  // P + (-P) = point at infinity (same x, opposite y)
+  if (first.x === second.x && mod(first.y + second.y) === 0) {
+    return INF;
   }
 
-  const x3 = mod(lambda * lambda - p1.x - p2.x);
-  const y3 = mod(lambda * (p1.x - x3) - p1.y);
-  return { x: x3, y: y3 };
+  let slope;
+  if (first.x === second.x && first.y === second.y) {
+    slope = mod((3 * first.x * first.x + A) * modularInverse(2 * first.y));
+  } else {
+    slope = mod((second.y - first.y) * modularInverse(second.x - first.x));
+  }
+  const x = mod(slope * slope - first.x - second.x);
+  const y = mod(slope * (first.x - x) - first.y);
+  return { x, y };
 }
 
-// kG by repeated addition. Returns [1G, 2G, ..., kG].
-function scalarMulSteps(k, pt = G) {
+// [1G, 2G, ..., kG] by adding the point again and again.
+function multiplyStepByStep(k, point = G) {
   const steps = [];
-  let acc = INF;
+  let total = INF;
   for (let n = 1; n <= k; n++) {
-    acc = pointAdd(acc, pt);
-    steps.push(acc);
+    total = addPoints(total, point);
+    steps.push(total);
   }
   return steps;
 }
 
-// kG with double-and-add: scan the bits of k from the lowest one.
-function scalarMulFast(k, pt = G) {
+// k·G with double-and-add: reads the bits of k from the lowest one.
+function multiplyFast(k, point = G) {
   let result = INF;
-  let addend = pt;           // pt, 2pt, 4pt, 8pt, ...
-  while (k > 0) {
-    if (k & 1) result = pointAdd(result, addend);
-    addend = pointAdd(addend, addend);
-    k >>= 1;
+  let power = point; // point, 2·point, 4·point, ...
+  let bits = k;
+  while (bits > 0) {
+    if (bits & 1) {
+      result = addPoints(result, power);
+    }
+    power = addPoints(power, power);
+    bits >>= 1;
   }
   return result;
+}
+
+// Point as text: "(5, 8)" or "INF".
+function formatPoint(point) {
+  return point === INF ? "INF" : `(${point.x}, ${point.y})`;
+}
+
+// All the points of the curve except the point at infinity.
+function allPoints() {
+  const points = [];
+  for (let x = 0; x < P; x++) {
+    for (let y = 0; y < P; y++) {
+      if (isOnCurve({ x, y })) {
+        points.push({ x, y });
+      }
+    }
+  }
+  return points;
+}
+
+// Order of a point: the smallest n ≥ 1 with n·point = INF.
+function orderOf(point) {
+  let multiple = point;
+  let n = 1;
+  while (multiple !== INF && n <= 1000) {
+    multiple = addPoints(multiple, point);
+    n++;
+  }
+  return n;
+}
+
+// Fills a <select> with all the points of the curve, with G selected.
+function fillPointSelect(select) {
+  allPoints().forEach((point, i) => {
+    const option = document.createElement("option");
+    option.value = i;
+    option.textContent = formatPoint(point);
+    option.selected = point.x === G.x && point.y === G.y;
+    select.appendChild(option);
+  });
 }

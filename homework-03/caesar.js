@@ -1,73 +1,106 @@
 // Caesar cipher, statistical attack and experiments. Needs corpus.js (TRAIN_TEXT, TEST_TEXT).
 
-// shift every letter by `shift` places (case is kept, other characters are unchanged)
+// Shifts every letter by `shift` places; case is kept, other characters are unchanged.
 function caesarShift(text, shift) {
-  shift = ((shift % 26) + 26) % 26;
-  return text.replace(/[A-Za-z]/g, (ch) => {
-    const base = ch <= "Z" ? 65 : 97;
-    return String.fromCharCode(((ch.charCodeAt(0) - base + shift) % 26) + base);
+  const positive = ((shift % 26) + 26) % 26;
+  return text.replace(/[A-Za-z]/g, (letter) => {
+    const base = letter <= "Z" ? 65 : 97;
+    return String.fromCharCode(((letter.charCodeAt(0) - base + positive) % 26) + base);
   });
 }
-const caesarEncrypt = (text, key) => caesarShift(text, key);
-const caesarDecrypt = (text, key) => caesarShift(text, -key);
 
-// counts of the 26 letters (A and a are the same letter)
-function letterCounts(text) {
-  const c = new Array(26).fill(0);
-  for (const ch of text) if (/[A-Za-z]/.test(ch)) c[ch.toLowerCase().charCodeAt(0) - 97]++;
-  return c;
+function caesarEncrypt(text, key) {
+  return caesarShift(text, key);
 }
 
-// letter frequencies learned from the training corpus (+1 smoothing so that no letter has probability 0)
-const MODEL = (function () {
-  const counts = letterCounts(TRAIN_TEXT), total = counts.reduce((a, b) => a + b, 0);
-  return { counts, total, freq: counts.map((c) => (c + 1) / (total + 26)) };
+function caesarDecrypt(text, key) {
+  return caesarShift(text, -key);
+}
+
+// Counts of the 26 letters (upper and lower case are the same letter).
+function letterCounts(text) {
+  const counts = new Array(26).fill(0);
+  for (const character of text) {
+    if (/[A-Za-z]/.test(character)) {
+      counts[character.toLowerCase().charCodeAt(0) - 97]++;
+    }
+  }
+  return counts;
+}
+
+// Letter frequencies of English learned from the training corpus.
+// +1 smoothing: no letter gets probability 0.
+const LANGUAGE_MODEL = (function () {
+  const counts = letterCounts(TRAIN_TEXT);
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  return { counts, total, frequencies: counts.map((count) => (count + 1) / (total + 26)) };
 })();
 
-// Attack: for every candidate key s, undo the shift and measure how far the letter counts are from the
-// expected counts of the language (chi-squared statistic). The key with the smallest value wins.
-function attack(cipherText) {
-  const counts = letterCounts(cipherText), n = counts.reduce((a, b) => a + b, 0);
-  if (n === 0) return null;
-  const chi = [];
-  for (let s = 0; s < 26; s++) {
-    let x = 0;
-    for (let i = 0; i < 26; i++) {              // plaintext letter i is the ciphertext letter i + s
-      const expected = n * MODEL.freq[i], observed = counts[(i + s) % 26];
-      x += ((observed - expected) ** 2) / expected;
-    }
-    chi.push(x);
+// Attack: for every candidate key s, undo the shift and measure how far the letter counts are
+// from those expected in English (chi-squared statistic). The smallest value wins.
+function attackCaesar(cipherText) {
+  const counts = letterCounts(cipherText);
+  const letters = counts.reduce((sum, count) => sum + count, 0);
+  if (letters === 0) {
+    return null;
   }
-  const order = chi.map((v, s) => [v, s]).sort((a, b) => a[0] - b[0]);
-  return { key: order[0][1], chi, counts, n, ratio: order[1][0] / order[0][0] };
-}
 
-// small seeded random generator, so that the experiment gives the same numbers every time
-function mulberry32(seed) {
-  return function () {
-    seed = (seed + 0x6D2B79F5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  const chiSquared = [];
+  for (let s = 0; s < 26; s++) {
+    let distance = 0;
+    for (let i = 0; i < 26; i++) {
+      // plaintext letter i corresponds to ciphertext letter i + s
+      const expected = letters * LANGUAGE_MODEL.frequencies[i];
+      const observed = counts[(i + s) % 26];
+      distance += (observed - expected) ** 2 / expected;
+    }
+    chiSquared.push(distance);
+  }
+
+  const ranking = chiSquared.map((value, key) => [value, key]).sort((a, b) => a[0] - b[0]);
+  return {
+    key: ranking[0][1],
+    chiSquared,
+    counts,
+    letters,
+    confidence: ranking[1][0] / ranking[0][0],
   };
 }
-// success rate of the attack for several ciphertext lengths, on passages of the (different) test text
+
+// Success rate of the attack for several ciphertext lengths, on passages of the test text
+// (a different author from the training corpus). A fixed seed gives the same numbers every time.
 function lengthExperiment(lengths, trials, seed) {
-  const letters = TEST_TEXT.replace(/[^A-Za-z]/g, "").toLowerCase(), rand = mulberry32(seed);
-  return lengths.map((L) => {
-    let ok = 0;
+  const letters = TEST_TEXT.replace(/[^A-Za-z]/g, "").toLowerCase();
+  const random = createRandom(seed);
+  return lengths.map((length) => {
+    let successes = 0;
     for (let t = 0; t < trials; t++) {
-      const start = Math.floor(rand() * (letters.length - L)), key = Math.floor(rand() * 26);
-      if (attack(caesarEncrypt(letters.slice(start, start + L), key)).key === key) ok++;
+      const start = Math.floor(random() * (letters.length - length));
+      const key = Math.floor(random() * 26);
+      const cipherText = caesarEncrypt(letters.slice(start, start + length), key);
+      if (attackCaesar(cipherText).key === key) {
+        successes++;
+      }
     }
-    return { L, rate: ok / trials };
+    return { length, rate: successes / trials };
   });
 }
-// single-symbol statistics: entropy (bits), index of coincidence, share of the most frequent symbol
-function symbolStats(counts) {
-  const n = counts.reduce((a, b) => a + b, 0);
-  let H = 0, ic = 0;
-  counts.forEach((c) => { if (c) { H -= (c / n) * Math.log2(c / n); ic += c * (c - 1); } });
-  return { n, H, ic: ic / (n * (n - 1)), top: Math.max(...counts) / n };
+
+// Single-symbol statistics: entropy (bits), index of coincidence, share of the most frequent symbol.
+function symbolStatistics(counts) {
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  let entropy = 0;
+  let coincidences = 0;
+  for (const count of counts) {
+    if (count > 0) {
+      entropy -= (count / total) * Math.log2(count / total);
+      coincidences += count * (count - 1);
+    }
+  }
+  return {
+    total,
+    entropy,
+    coincidence: coincidences / (total * (total - 1)),
+    topShare: Math.max(...counts) / total,
+  };
 }
-if (typeof module !== "undefined") module.exports = { caesarShift, caesarEncrypt, caesarDecrypt, letterCounts, MODEL, attack, lengthExperiment, symbolStats, mulberry32 };

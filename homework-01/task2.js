@@ -1,81 +1,193 @@
+// Task 2: animated drawing of G, 2G, 3G, ... on the grid of the curve points.
 (function () {
-  var $ = function (id) { return document.getElementById(id); };
-  var cv = $("t2-plot"), ctx = cv.getContext("2d");
-  var M = 40, CELL = (cv.width - 2 * M) / (P - 1);
-  var px = function (x) { return M + x * CELL; }, py = function (y) { return cv.height - M - y * CELL; };
-  var css = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
-  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var DUR = reduce ? 0 : 600;
-  var points = allPoints(), steps = [], idx = 0, timer = null, t0 = 0;
+  const element = (id) => document.getElementById(id);
+  const canvas = element("t2-plot");
+  const context = canvas.getContext("2d");
+  const MARGIN = 40;
+  const CELL = (canvas.width - 2 * MARGIN) / (P - 1);
+  const toX = (x) => MARGIN + x * CELL;
+  const toY = (y) => canvas.height - MARGIN - y * CELL;
+  const prefersReducedMotion =
+    window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const SEGMENT_DURATION = prefersReducedMotion ? 0 : 600;
+  const points = allPoints();
 
-  function prog() { return DUR ? Math.min(1, (performance.now() - t0) / DUR) : 1; }
-  function ease(t) { return 1 - Math.pow(1 - t, 3); }
-  function g() { return points[Number($("t2-g").value)]; }
+  let steps = [];
+  let shown = 0;
+  let timer = null;
+  let segmentStart = 0;
+
+  // progress (0..1) of the last segment, with an ease-out curve
+  function segmentProgress() {
+    const linear = SEGMENT_DURATION
+      ? Math.min(1, (performance.now() - segmentStart) / SEGMENT_DURATION)
+      : 1;
+    return 1 - Math.pow(1 - linear, 3);
+  }
+
+  const selectedBase = () => points[Number(element("t2-g").value)];
+
+  function drawGrid() {
+    context.font = "12px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.strokeStyle = cssColor("--line");
+    context.fillStyle = cssColor("--muted");
+    context.lineWidth = 1;
+    for (let i = 0; i < P; i++) {
+      context.beginPath();
+      context.moveTo(toX(i), toY(0));
+      context.lineTo(toX(i), toY(P - 1));
+      context.stroke();
+      context.beginPath();
+      context.moveTo(toX(0), toY(i));
+      context.lineTo(toX(P - 1), toY(i));
+      context.stroke();
+      context.fillText(i, toX(i), toY(0) + 22);
+      context.fillText(i, toX(0) - 22, toY(i) + 4);
+    }
+    for (const point of points) {
+      context.beginPath();
+      context.arc(toX(point.x), toY(point.y), 4, 0, 6.2832);
+      context.fill();
+    }
+  }
+
+  // The path joins successive multiples; the last segment grows during the animation.
+  function drawPath(visible, progress, accent) {
+    context.lineWidth = 2.5;
+    context.strokeStyle = accent;
+    let previous = null;
+    visible.forEach((point, i) => {
+      const isLast = i === visible.length - 1;
+      if (point !== INF && previous) {
+        const share = isLast ? progress : 1;
+        context.globalAlpha = isLast ? 1 : 0.55;
+        context.beginPath();
+        context.moveTo(toX(previous.x), toY(previous.y));
+        context.lineTo(
+          toX(previous.x + (point.x - previous.x) * share),
+          toY(previous.y + (point.y - previous.y) * share),
+        );
+        context.stroke();
+        context.globalAlpha = 1;
+      }
+      if (point !== INF) {
+        previous = point;
+      }
+    });
+  }
+
+  // Visited multiples with their labels; the current one grows and pulses.
+  function drawVisited(visible, progress, accent, now) {
+    visible.forEach((point, i) => {
+      if (point === INF) {
+        return;
+      }
+      const isLast = i === visible.length - 1;
+      const pulse = Math.sin(now / 220);
+      const radius = isLast ? 4 + 5 * progress + 1.5 * pulse : 6;
+      if (isLast) {
+        context.globalAlpha = 0.25;
+        context.fillStyle = accent;
+        context.beginPath();
+        context.arc(toX(point.x), toY(point.y), radius + 6 + 3 * pulse, 0, 6.2832);
+        context.fill();
+        context.globalAlpha = 1;
+      }
+      context.fillStyle = accent;
+      context.beginPath();
+      context.arc(toX(point.x), toY(point.y), radius, 0, 6.2832);
+      context.fill();
+      context.fillStyle = cssColor("--ink");
+      context.fillText(`${i + 1}G`, toX(point.x) + 15, toY(point.y) - 9);
+    });
+  }
 
   function draw() {
-    var now = performance.now(), p = ease(prog());
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.font = "12px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.strokeStyle = css("--line"); ctx.fillStyle = css("--muted"); ctx.lineWidth = 1;
-    for (var i = 0; i < P; i++) {
-      ctx.beginPath(); ctx.moveTo(px(i), py(0)); ctx.lineTo(px(i), py(P - 1)); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px(0), py(i)); ctx.lineTo(px(P - 1), py(i)); ctx.stroke();
-      ctx.fillText(i, px(i), py(0) + 22); ctx.fillText(i, px(0) - 22, py(i) + 4);
-    }
-    points.forEach(function (q) { ctx.beginPath(); ctx.arc(px(q.x), py(q.y), 4, 0, 6.2832); ctx.fill(); });
-    var shown = steps.slice(0, idx), prev = null, accent = css("--accent");
-    ctx.lineWidth = 2.5; ctx.strokeStyle = accent;
-    shown.forEach(function (q, i) {
-      var last = i === shown.length - 1;
-      if (q !== INF && prev) {
-        var f = last ? p : 1;
-        ctx.globalAlpha = last ? 1 : 0.55;
-        ctx.beginPath(); ctx.moveTo(px(prev.x), py(prev.y));
-        ctx.lineTo(px(prev.x + (q.x - prev.x) * f), py(prev.y + (q.y - prev.y) * f)); ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      if (q !== INF) prev = q;
-    });
-    shown.forEach(function (q, i) {
-      if (q === INF) return;
-      var last = i === shown.length - 1;
-      var r = last ? 4 + 5 * p + 1.5 * Math.sin(now / 220) : 6;
-      if (last) { ctx.globalAlpha = 0.25; ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(px(q.x), py(q.y), r + 6 + 3 * Math.sin(now / 220), 0, 6.2832); ctx.fill(); ctx.globalAlpha = 1; }
-      ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(px(q.x), py(q.y), r, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = css("--ink"); ctx.fillText((i + 1) + "G", px(q.x) + 15, py(q.y) - 9);
-    });
+    const now = performance.now();
+    const progress = segmentProgress();
+    const accent = cssColor("--accent");
+    const visible = steps.slice(0, shown);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    drawGrid();
+    drawPath(visible, progress, accent);
+    drawVisited(visible, progress, accent, now);
   }
-  function frame() { draw(); requestAnimationFrame(frame); }
 
-  function caption() {
-    if (idx === 0) { $("t2-caption").textContent = "G = " + fmt(g()) + ". Press Step or Play."; return; }
-    var q = steps[idx - 1], t = idx + "G = " + fmt(q);
-    if (q === INF) t += " (point at infinity: the next step starts again from G)";
-    if (idx === steps.length) { t += ". Done: the toy public key is kG = " + fmt(q) + "."; $("t2-step").disabled = true; stop(); }
-    $("t2-caption").textContent = t;
+  function animationLoop() {
+    draw();
+    requestAnimationFrame(animationLoop);
   }
-  function setup() {
+
+  function updateCaption() {
+    if (shown === 0) {
+      element("t2-caption").textContent = `G = ${formatPoint(selectedBase())}. Press Step or Play.`;
+      return;
+    }
+    const point = steps[shown - 1];
+    let text = `${shown}G = ${formatPoint(point)}`;
+    if (point === INF) {
+      text += " (point at infinity: the next step starts again from G)";
+    }
+    if (shown === steps.length) {
+      text += `. Done: the toy public key is kG = ${formatPoint(point)}.`;
+      element("t2-step").disabled = true;
+      stop();
+    }
+    element("t2-caption").textContent = text;
+  }
+
+  function reset() {
     stop();
-    var k = Math.min(100, Math.max(1, Math.floor(Number($("t2-k").value)) || 1));
-    steps = scalarMulSteps(k, g()); idx = 0; t0 = performance.now(); $("t2-step").disabled = false; caption();
+    const k = Math.min(100, Math.max(1, Math.floor(Number(element("t2-k").value)) || 1));
+    steps = multiplyStepByStep(k, selectedBase());
+    shown = 0;
+    segmentStart = performance.now();
+    element("t2-step").disabled = false;
+    updateCaption();
   }
-  function step() { if (idx < steps.length) { idx++; t0 = performance.now(); caption(); } }
-  function stop() { if (timer) { clearInterval(timer); timer = null; } $("t2-play").textContent = "Play"; }
-  function play() {
-    if (timer) return stop();
-    if (idx >= steps.length) return;
-    $("t2-play").textContent = "Pause"; step();
-    timer = setInterval(step, Number($("t2-speed").value));
+
+  function step() {
+    if (shown < steps.length) {
+      shown++;
+      segmentStart = performance.now();
+      updateCaption();
+    }
   }
-  points.forEach(function (q, i) {
-    var o = document.createElement("option"); o.value = i; o.textContent = fmt(q);
-    if (q.x === G.x && q.y === G.y) o.selected = true; $("t2-g").appendChild(o);
+
+  function stop() {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    element("t2-play").textContent = "Play";
+  }
+
+  function togglePlay() {
+    if (timer) {
+      stop();
+      return;
+    }
+    if (shown >= steps.length) {
+      return;
+    }
+    element("t2-play").textContent = "Pause";
+    step();
+    timer = setInterval(step, Number(element("t2-speed").value));
+  }
+
+  fillPointSelect(element("t2-g"));
+  element("t2-step").addEventListener("click", step);
+  element("t2-play").addEventListener("click", togglePlay);
+  element("t2-reset").addEventListener("click", reset);
+  element("t2-g").addEventListener("change", reset);
+  element("t2-k").addEventListener("change", reset);
+  element("t2-speed").addEventListener("change", () => {
+    if (timer) {
+      stop();
+      togglePlay();
+    }
   });
-  $("t2-step").addEventListener("click", step);
-  $("t2-play").addEventListener("click", play);
-  $("t2-reset").addEventListener("click", setup);
-  $("t2-g").addEventListener("change", setup);
-  $("t2-k").addEventListener("change", setup);
-  $("t2-speed").addEventListener("change", function () { if (timer) { stop(); play(); } });
-  setup(); frame();
+  reset();
+  animationLoop();
 })();
