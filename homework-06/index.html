@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homework 6: Riemann vs Lebesgue and the normal CDF</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><a href="../index.html">Home</a><span>/</span><span class="brand">Homework 6: Riemann vs Lebesgue and the normal CDF</span></header>
+<main>
+  <div class="hero small">
+    <p class="eyebrow">Homework 6 · Numerical integration</p>
+    <h1>Riemann vs Lebesgue and the normal CDF</h1>
+    <p class="lead">Integrating by slicing the domain or the range of a function, and computing the standard normal distribution function, which has no elementary formula.</p>
+  </div>
+  <nav class="toc" id="toc" aria-label="Contents"></nav>
+
+  <section>
+  <h2 id="summary">Summary</h2>
+  <p>Exercise 1 computes the integral of nine functions in two ways: Riemann's, which cuts the domain into subintervals, and a Lebesgue-inspired one, which cuts the range of values into levels and measures their preimages. Exercise 2 computes the standard normal CDF Φ(x) with Simpson's rule, the power series of the error function and a fast approximation of erf, and checks them against high-precision reference values.</p>
+  <p>For Riemann-integrable functions both approaches converge to the same value, but the Riemann midpoint rule is faster and more accurate here, because the level-set method has to estimate the measure of each preimage from samples. The two behave differently on step and kinked functions, on the unbounded 1/√x, and on the pathological Dirichlet function, where no numerical method can see the true Lebesgue integral. For Φ(x), Liouville's theorem rules out an elementary formula; erf gives an exact representation, but it still has to be evaluated numerically.</p>
+  <h3>Results of the current run</h3>
+  <ul class="runlist" id="runSummary"><li>Computing…</li></ul>
+  </section>
+
+  <section>
+  <h2 id="ex1">Ex. 1: two ways to slice an integral</h2>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Riemann</span><h4>Partition the domain</h4>
+      <p class="formula">∫ f ≈ Σ<sub>i</sub> f(m<sub>i</sub>) · Δx</p>
+      <p>The interval [a, b] is cut into N subintervals of width Δx = (b − a)/N, and each contributes a rectangle whose height is the value of f at the midpoint m<sub>i</sub>. The function is integrable when these sums have one limit for every way of choosing the points.</p>
+      <p><strong>Cost:</strong> N evaluations of f. <strong>Error</strong> for a smooth f: of order 1/N².</p></div>
+    <div class="kcard"><span class="tag">Lebesgue</span><h4>Partition the range</h4>
+      <p class="formula">∫ f = ∫<sub>0</sub><sup>max f</sup> μ({x : f(x) &gt; t}) dt</p>
+      <p>For f ≥ 0 the integral is the area under the curve read in horizontal layers (the layer-cake formula). The range [0, max f] is cut into B levels t<sub>j</sub>, and each layer of thickness Δt contributes Δt · μ({f &gt; t<sub>j</sub>}), the measure of the preimage.</p>
+      <p><strong>Numerically</strong> the measures are estimated from M = max(256, 4N) samples: the share of samples above t times b − a. This is an approximation of the preimage measure, not an exact Lebesgue construction.</p></div>
+  </div>
+  <div class="panel">
+    <div class="controls">
+      <label>Function <select id="func">
+        <option value="sin">sin(x), [0, π]</option>
+        <option value="square">x², [0, 1]</option>
+        <option value="stepUp">1 if x &lt; 0.5, else 3</option>
+        <option value="abs">|x − 0.5|, [0, 1]</option>
+        <option value="inverseSqrt">1 / √x, (0, 1]</option>
+        <option value="stepDown">1 if x &lt; 0.5, else 0</option>
+        <option value="sinc">sin(x) / x, [0, π]</option>
+        <option value="thomae">Thomae's function</option>
+        <option value="dirichlet">Dirichlet function</option>
+      </select></label>
+      <label>Subintervals (N) <input id="intervals" type="number" value="64" min="4" max="1024"></label>
+      <label>Range levels (B) <input id="levels" type="number" value="64" min="4" max="1024"></label>
+      <button id="runIntegral" type="button">Compare integrals</button>
+    </div>
+    <p class="legend">Numbers quoted in the text refer to the default values (sin x, N = 64, B = 64).</p>
+  </div>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Riemann</span><h4>Midpoint rectangles</h4><canvas id="r-chart" width="560" height="280" aria-label="Riemann midpoint rectangles"></canvas><p class="stat" id="r-stat"></p></div>
+    <div class="kcard"><span class="tag">Lebesgue</span><h4>Horizontal layers over the preimages {f &gt; t}</h4><canvas id="l-chart" width="560" height="280" aria-label="Lebesgue layers"></canvas><p class="stat" id="l-stat"></p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="comparison">Accuracy, convergence and efficiency</h2>
+  <p>The selected function is integrated with N = 16, 32, …, 1024 subintervals; the level-set method uses B = N levels and M = max(256, 4N) samples. The chart puts both errors against the number of function evaluations, which is a fair measure of the work.</p>
+  <div class="split">
+    <div class="kcard"><span class="tag">Convergence</span><h4>Absolute error against evaluations of f, both axes logarithmic</h4><canvas id="c-chart" width="560" height="300" aria-label="Error against function evaluations"></canvas><p class="stat" id="c-stat"></p></div>
+    <div class="kgrid k1">
+      <div class="kcard"><span class="tag">Smooth functions</span><p>For sin x, x² and sin x / x the Riemann error falls by 4 each time N doubles (for sin x from 3.2 × 10⁻³ at N = 16 to 7.8 × 10⁻⁷ at N = 1024), the 1/N² rate of the midpoint rule. The level-set error is larger and irregular (between 10⁻³ and 10⁻⁵), because it depends on how the levels meet the samples. Both converge to the same value.</p></div>
+      <div class="kcard"><span class="tag">Steps and kinks</span><p>For the step 1/3 the midpoint rule is exact as soon as the jump at 0.5 falls on a grid point, while the level-set error is 3/(2B): the value 1 is never a level boundary when B is a power of 2. For |x − 0.5| the same happens. The step 1/0 is exact for both. Here the two approaches really behave differently, even though their limits coincide.</p></div>
+      <div class="kcard"><span class="tag">Efficiency</span><p>Riemann needs N evaluations and N additions. The level-set method needs M ≥ 4N evaluations plus a sort of the samples (M log M), so in our measurements it is tens of times slower for the same N. Its advantage is conceptual: it only needs the measures of the level sets, which is what makes Lebesgue's integral work for far more functions.</p></div>
+    </div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="pathological">Pathological and difficult functions</h2>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Unbounded</span><h4>1 / √x on (0, 1]</h4><p>The integral is 2 (improper for Riemann, an ordinary Lebesgue integral). Both methods converge slowly: the Riemann error goes from 0.15 at N = 16 to 0.019 at N = 1024, a rate 1/√N, because the midpoint rule misses the spike at 0. The level-set method cannot use a finite top level either, and its error stays around 10⁻².</p></div>
+    <div class="kcard"><span class="tag">Thomae</span><h4>1/q at x = p/q, 0 at irrationals</h4><p>It is discontinuous at every rational but continuous at every irrational. The discontinuities form a set of measure zero, so it is Riemann-integrable and both integrals are 0. On our grids every midpoint (2i + 1)/(2N) has denominator 2N, so the Riemann sum is exactly 1/(2N): it tends to 0, and the level-set estimate does too.</p></div>
+    <div class="kcard"><span class="tag">Dirichlet</span><h4>1 at rationals, 0 at irrationals</h4><p>Every interval contains both, so lower Riemann sums are 0 and upper sums are 1: it is not Riemann-integrable. The rationals have measure 0, so its Lebesgue integral is 0. A computer only stores rational numbers, so it sees the value 1 everywhere and both methods return 1. The true answer can only come from the theory, not from sampling.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="ex2">Ex. 2: the standard normal CDF</h2>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Definition</span><h4>An integral of the Gaussian density</h4>
+      <p class="formula">Φ(x) = (1/√(2π)) ∫<sub>−∞</sub><sup>x</sup> e<sup>−t²/2</sup> dt</p>
+      <p>By symmetry Φ(−x) = 1 − Φ(x) and Φ(0) = ½, so only the finite integral from 0 to |x| has to be computed.</p></div>
+    <div class="kcard"><span class="tag">Liouville's theorem</span><h4>No elementary antiderivative</h4>
+      <p>Liouville's theorem describes when an elementary function has an elementary antiderivative. A corollary: for rational g and h (h not constant), ∫ g·e<sup>h</sup> is elementary only if some rational function R satisfies R′ + h′R = g.</p>
+      <p>For e<sup>−t²/2</sup>, g = 1 and h = −t²/2, so R′ − tR = 1. A polynomial R of degree d gives a left side of degree d + 1, never the constant 1, and a pole of R would create a pole of higher order in R′ that nothing cancels. So no such R exists, and Φ has no formula in terms of elementary functions.</p></div>
+    <div class="kcard"><span class="tag">Error function</span><h4>An exact representation</h4>
+      <p class="formula">erf(z) = (2/√π) ∫<sub>0</sub><sup>z</sup> e<sup>−t²</sup> dt, Φ(x) = ½ [1 + erf(x/√2)]</p>
+      <p>Defining a new special function gives an exact expression for Φ. But erf is itself defined by an integral, so to get numbers it still needs an algorithm: numerical integration, a series or an approximation. Libraries implement these, and computing them well is the subject of this exercise.</p></div>
+  </div>
+  <p class="legend">Background: <a href="https://faculty.etsu.edu/gardnerr/4047/notes-Hogg-McKean-Craig/Hogg-McKean-Craig-3-4.pdf">Hogg, McKean and Craig, Section 3.4 (the normal distribution)</a>.</p>
+  </section>
+
+  <section>
+  <h2 id="calculator">Computing Φ(x) three ways</h2>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Method 1</span><h4>Simpson's rule</h4><p>Composite Simpson on the density from 0 to |x| with n subintervals (n even), then symmetry. Error of order h⁴: halving h divides it by 16. Cost: n + 1 evaluations of e<sup>−t²/2</sup>.</p></div>
+    <div class="kcard"><span class="tag">Method 2</span><h4>Power series of erf</h4><p>erf(z) = (2/√π) Σ (−1)<sup>k</sup> z<sup>2k+1</sup> / (k! (2k + 1)), each term obtained from the previous one with one multiplication. It converges for every z, but for large |x| its terms grow before they shrink and cancel each other, which costs digits.</p></div>
+    <div class="kcard"><span class="tag">Method 3</span><h4>Fast erf approximation</h4><p>Abramowitz and Stegun 7.1.26: a degree-5 polynomial in t = 1/(1 + 0.3275911·|z|) times e<sup>−z²</sup>, with a guaranteed absolute error below 1.5 × 10⁻⁷ for erf. Constant cost, limited accuracy.</p></div>
+  </div>
+  <div class="panel">
+    <div class="controls">
+      <label>Point x <input id="x" type="number" value="1.5" min="-8" max="8" step="0.5"></label>
+      <label>Simpson subintervals (n) <input id="simpson" type="number" value="64" min="2" max="4096" step="2"></label>
+      <label>Series terms <input id="terms" type="number" value="60" min="1" max="200"></label>
+      <button id="runCdf" type="button">Compute Φ(x)</button>
+    </div>
+    <p class="legend">The reference values Φ(x) for x = −5, −4.5, …, 5 were computed with mpmath at 40 digits; they agree with <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.ndtr.html">scipy.special.ndtr</a> to a relative 2 × 10⁻¹⁵ and with the <a href="https://www.itl.nist.gov/div898/handbook/eda/section3/eda3671.htm">NIST standard normal table</a> to its 5 decimals.</p>
+  </div>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Results</span><h4>Φ(x) with each method</h4><dl class="kv" id="n-results"></dl></div>
+    <div class="kcard"><span class="tag">Density</span><h4>The shaded area is Φ(x) = P(Z ≤ x)</h4><canvas id="n-density" width="560" height="260" aria-label="Standard normal density with the area up to x shaded"></canvas></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="accuracy">Accuracy and efficiency of the three methods</h2>
+  <div class="kgrid k2">
+    <div class="kcard"><span class="tag">Benchmark</span><h4>Absolute error at x = −5, −4.5, …, 5 (logarithmic axis)</h4><canvas id="n-bench" width="560" height="300" aria-label="Absolute error of the three methods against x"></canvas>
+      <p class="stat" id="b-stat"></p></div>
+    <div class="kcard"><span class="tag">Convergence at x = 2</span><h4>Absolute error against work (evaluations or terms), both axes logarithmic</h4><canvas id="n-conv" width="560" height="300" aria-label="Error against work at x = 2"></canvas>
+      <p class="stat" id="t-stat"></p></div>
+  </div>
+  <div class="kgrid">
+    <div class="kcard"><span class="tag">Accuracy</span><p>With the default settings the largest error over the benchmark is about 2 × 10⁻⁹ for Simpson (n = 64), 10⁻¹³ for the series (60 terms) and 7 × 10⁻⁸ for the fast approximation. With only 30 terms the series fails at |x| = 5 (error 0.07): the number of terms it needs grows like x². At x = 2 Simpson gains a factor 16 per halving of h (from 3.6 × 10⁻³ with n = 2 to 2 × 10⁻¹² with n = 256), and the series reaches 8 × 10⁻¹⁵ with 20 terms.</p></div>
+    <div class="kcard"><span class="tag">Tails</span><p>Absolute errors hide a problem in the tails: at x = −5, Φ ≈ 2.9 × 10⁻⁷, so the fast approximation is off by 0.16% in relative terms, and the series loses digits to cancellation (relative error 3 × 10⁻⁷). Accurate tails need methods designed for them, such as computing 1 − Φ directly with a continued fraction.</p></div>
+    <div class="kcard"><span class="tag">Efficiency</span><p>In our measurements the fast approximation takes well under a microsecond, while the series with 60 terms and Simpson with n = 64 take a few microseconds each. The right choice depends on the accuracy needed: the fast formula is enough for statistics tables, the series or a refined integration for full double precision.</p></div>
+  </div>
+  </section>
+
+  <section>
+  <h2 id="conclusions">Conclusions</h2>
+  <p>Riemann and Lebesgue integration agree on every Riemann-integrable function, and numerically both converge to the same values. Slicing the domain is the more efficient algorithm for ordinary functions; slicing the range needs the measure of each level set and is what extends integration to functions like Dirichlet's, which no sampling can handle. The normal CDF has no elementary formula by Liouville's theorem; erf gives it an exact name, and Simpson's rule, the erf series and the fast approximation show the trade-off between accuracy, cost and behavior in the tails.</p>
+  </section>
+</main>
+<footer>
+  <p>Matteo Miano · Student ID 2117312 · Sapienza University of Rome · Master's Degree in Cybersecurity · Statistics 2026/27</p>
+  <p>Toy examples for educational purposes. Never use a real seed phrase or private key.</p>
+</footer>
+<script src="../site.js"></script>
+<script src="../js/stats.js"></script>
+<script src="../js/format.js"></script>
+<script src="../js/charts.js"></script>
+<script src="integrands.js"></script>
+<script src="integration.js"></script>
+<script src="normal-cdf.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
